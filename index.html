@@ -25,6 +25,16 @@
     position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0;
     background: radial-gradient(ellipse at center, rgba(244,63,94,0.12) 40%, rgba(244,63,94,0.55) 100%);
   }
+  #lavaOverlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 7; opacity: 0;
+    background: radial-gradient(ellipse at center, rgba(255,106,42,0.55) 30%, rgba(196,62,18,0.85) 100%);
+    transition: opacity .15s;
+  }
+  #waterOverlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 7; opacity: 0;
+    background: rgba(56,189,248,0.22);
+    transition: opacity .15s;
+  }
 
   #crosshair {
     position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -280,6 +290,8 @@
 <body>
 <div id="vignette"></div>
 <div id="dmgflash"></div>
+<div id="lavaOverlay"></div>
+<div id="waterOverlay"></div>
 <div id="crosshair"></div>
 <div id="stats"></div>
 <div id="toasts"></div>
@@ -350,7 +362,7 @@
 import * as THREE from 'three';
 
 /* ================= ブロック定義 ================= */
-const B = { AIR:0, GRASS:1, DIRT:2, STONE:3, SAND:4, WATER:5, WOOD:6, LEAF:7, GLASS:8, GLOW:9, SNOW:10 };
+const B = { AIR:0, GRASS:1, DIRT:2, STONE:3, SAND:4, WATER:5, WOOD:6, LEAF:7, GLASS:8, GLOW:9, SNOW:10, LAVA:11, DEEP:12 };
 const DEFS = {
   [B.GRASS]: { name:'草ブロック',     color:'#5fae53', tiles:{ top:[0,0], side:[1,0], bottom:[2,0] } },
   [B.DIRT]:  { name:'土',             color:'#79553a', tiles:{ top:[2,0], side:[2,0], bottom:[2,0] } },
@@ -362,13 +374,15 @@ const DEFS = {
   [B.GLASS]: { name:'ガラス',         color:'#cfeefe', tiles:{ top:[0,1], side:[0,1], bottom:[0,1] } },
   [B.GLOW]:  { name:'グロウストーン', color:'#ffd166', tiles:{ top:[1,1], side:[1,1], bottom:[1,1] } },
   [B.SNOW]:  { name:'雪',             color:'#eef3f7', tiles:{ top:[2,1], side:[3,1], bottom:[2,0] } },
+  [B.LAVA]:  { name:'溶岩',           color:'#ff6a2a', tiles:{ top:[1,1], side:[1,1], bottom:[1,1] } },
+  [B.DEEP]:  { name:'深層石',         color:'#565b63', tiles:{ top:[4,1], side:[4,1], bottom:[4,1] } },
 };
 for (const id in DEFS) DEFS[id].c = new THREE.Color(DEFS[id].color);
-const isSolid  = id => id !== B.AIR && id !== B.WATER;
-const isOpaque = id => id !== B.AIR && id !== B.WATER && id !== B.GLASS;
+const isSolid  = id => id !== B.AIR && id !== B.WATER && id !== B.LAVA;
+const isOpaque = id => id !== B.AIR && id !== B.WATER && id !== B.GLASS && id !== B.LAVA;
 const HOTBAR = [B.GRASS, B.DIRT, B.STONE, B.SAND, B.WOOD, B.LEAF, B.GLASS, B.GLOW, B.WATER];
 // 破壊で手に入る素材
-const BLOCK_MAT = { [B.WOOD]:'wood', [B.STONE]:'stone', [B.GLOW]:'glow' };
+const BLOCK_MAT = { [B.WOOD]:'wood', [B.STONE]:'stone', [B.GLOW]:'glow', [B.DEEP]:'stone' };
 
 /* ================= テクスチャ生成 ================= */
 const TILE = 16, ACOLS = 8;
@@ -474,6 +488,17 @@ atlasCanvas.width = atlasCanvas.height = TILE * ACOLS;
       for (let y = 0; y < band; y++) { ctx.fillStyle = pick(['#eef3f7', '#e6edf3']); ctx.fillRect(x, y, 1, 1); }
     }
   });
+  // 深層石
+  tile(4, 1, () => {
+    speckle(['#565b63', '#4d525a', '#5f656d', '#474c54']);
+    for (let i = 0; i < 7; i++) {
+      let x = (rng() * 16) | 0, y = (rng() * 16) | 0;
+      for (let j = 0; j < 5; j++) {
+        ctx.fillStyle = '#33373d'; ctx.fillRect(x & 15, y & 15, 1, 1);
+        x += rng() < 0.5 ? 1 : 0; y += 1;
+      }
+    }
+  });
 }
 const atlasTex = new THREE.CanvasTexture(atlasCanvas);
 atlasTex.magFilter = THREE.NearestFilter;
@@ -500,6 +525,30 @@ waterTex.generateMipmaps = false;
 waterTex.wrapS = waterTex.wrapT = THREE.RepeatWrapping;
 waterTex.colorSpace = THREE.SRGBColorSpace;
 
+// 溶岩テクスチャ（アニメーション用）
+const lavaCanvas = document.createElement('canvas');
+lavaCanvas.width = lavaCanvas.height = 32;
+{
+  const ctx = lavaCanvas.getContext('2d');
+  const rng = srand(777777);
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+    const w = Math.sin(x * 0.5 + Math.sin(y * 0.45) * 2.2) + Math.sin(y * 0.55);
+    let c;
+    if (w > 1.1) c = '#ffe08a';
+    else if (w > 0.4) c = '#ff9b3d';
+    else if (w > -0.5) c = rng() < 0.1 ? '#ffc14d' : '#f2611f';
+    else c = '#c43e12';
+    ctx.fillStyle = c;
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+const lavaTex = new THREE.CanvasTexture(lavaCanvas);
+lavaTex.magFilter = THREE.NearestFilter;
+lavaTex.minFilter = THREE.NearestFilter;
+lavaTex.generateMipmaps = false;
+lavaTex.wrapS = lavaTex.wrapT = THREE.RepeatWrapping;
+lavaTex.colorSpace = THREE.SRGBColorSpace;
+
 // ホットバー用サムネイル
 function tileThumb(tc, tr) {
   const cv = document.createElement('canvas');
@@ -509,6 +558,7 @@ function tileThumb(tc, tr) {
 }
 for (const id in DEFS) {
   if (+id === B.WATER) DEFS[id].thumb = waterCanvas.toDataURL();
+  else if (+id === B.LAVA) DEFS[id].thumb = lavaCanvas.toDataURL();
   else DEFS[id].thumb = tileThumb(...DEFS[id].tiles.side);
 }
 
@@ -529,6 +579,25 @@ function fbm(x, z, oct) {
   let v = 0, amp = 0.5, f = 1;
   for (let i = 0; i < oct; i++) { v += amp * vnoise(x * f, z * f); amp *= 0.5; f *= 2; }
   return v;
+}
+// 3Dノイズ（洞窟生成用）
+function hash3(x, y, z) {
+  let n = Math.imul(x, 374761393) + Math.imul(y, 982451653) + Math.imul(z, 668265263);
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+function noise3(x, y, z) {
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  const fx = x - ix, fy = y - iy, fz = z - iz;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy), sz = fz * fz * (3 - 2 * fz);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const c000 = hash3(ix, iy, iz),     c100 = hash3(ix + 1, iy, iz);
+  const c010 = hash3(ix, iy + 1, iz), c110 = hash3(ix + 1, iy + 1, iz);
+  const c001 = hash3(ix, iy, iz + 1),     c101 = hash3(ix + 1, iy, iz + 1);
+  const c011 = hash3(ix, iy + 1, iz + 1), c111 = hash3(ix + 1, iy + 1, iz + 1);
+  return lerp(
+    lerp(lerp(c000, c100, sx), lerp(c010, c110, sx), sy),
+    lerp(lerp(c001, c101, sx), lerp(c011, c111, sx), sy), sz);
 }
 
 /* ================= ワールド ================= */
@@ -552,10 +621,20 @@ function genData(cx, cz) {
     const wx = cx * CH + lx, wz = cz * CH + lz;
     const h = heightAt(wx, wz);
     for (let y = 0; y <= h; y++) {
-      let id = B.STONE;
+      let id;
       if (y === h)        id = h < SEA + 2 ? B.SAND : (h > 38 ? B.SNOW : B.GRASS);
       else if (y > h - 3) id = h < SEA + 2 ? B.SAND : B.DIRT;
-      else if (y < h - 3 && hash2(wx * 5 + y * 131, wz * 5 + y * 77) < 0.006) id = B.GLOW; // 光る鉱石
+      else {
+        id = y < 12 ? B.DEEP : B.STONE; // 深層は深層石
+        const ore = y < 12 ? 0.013 : 0.006; // 深層は鉱石が濃い
+        if (hash2(wx * 5 + y * 131, wz * 5 + y * 77) < ore) id = B.GLOW;
+      }
+      // 洞窟を掘る（深部は大空洞＋マグマだまり）
+      if (y >= 1 && y < h - 3) {
+        const cave = noise3(wx * 0.075, y * 0.105, wz * 0.075);
+        const th = y <= 8 ? 0.40 : 0.58;
+        if (cave > th) id = y <= 4 ? B.LAVA : B.AIR;
+      }
       data[idx(lx, y, lz)] = id;
     }
     for (let y = h + 1; y <= SEA; y++) data[idx(lx, y, lz)] = B.WATER;
@@ -632,6 +711,7 @@ const matOpaque = new THREE.MeshLambertMaterial({ map: atlasTex, vertexColors: t
 const matWater  = new THREE.MeshLambertMaterial({ map: waterTex, vertexColors: true, transparent: true, opacity: 0.62 });
 const matGlass  = new THREE.MeshLambertMaterial({ map: atlasTex, vertexColors: true, transparent: true, depthWrite: false });
 const matGlow   = new THREE.MeshBasicMaterial({ map: atlasTex, vertexColors: true });
+const matLava   = new THREE.MeshBasicMaterial({ map: lavaTex, vertexColors: true });
 
 function buildGeom(parts) {
   if (parts.pos.length === 0) return null;
@@ -649,7 +729,7 @@ function meshChunk(cx, cz) {
   for (const m of c.meshes) { scene.remove(m); m.geometry.dispose(); }
   c.meshes = [];
   const mk = () => ({ pos: [], nrm: [], col: [], uv: [], ind: [] });
-  const groups = { opaque: mk(), water: mk(), glass: mk(), glow: mk() };
+  const groups = { opaque: mk(), water: mk(), glass: mk(), glow: mk(), lava: mk() };
   const ox = cx * CH, oz = cz * CH;
   const INSET = 1 / 32;
   for (let y = 0; y < H; y++) for (let lz = 0; lz < CH; lz++) for (let lx = 0; lx < CH; lx++) {
@@ -657,8 +737,8 @@ function meshChunk(cx, cz) {
     if (id === B.AIR) continue;
     const wx = ox + lx, wz = oz + lz;
     const def = DEFS[id];
-    const grp = id === B.WATER ? groups.water : id === B.GLASS ? groups.glass : id === B.GLOW ? groups.glow : groups.opaque;
-    const sinkTop = id === B.WATER && getBlock(wx, y + 1, wz) === B.AIR;
+    const grp = id === B.WATER ? groups.water : id === B.GLASS ? groups.glass : id === B.GLOW ? groups.glow : id === B.LAVA ? groups.lava : groups.opaque;
+    const sinkTop = (id === B.WATER || id === B.LAVA) && getBlock(wx, y + 1, wz) === B.AIR;
     for (const f of FACES) {
       const nx = wx + f.dir[0], ny = y + f.dir[1], nz = wz + f.dir[2];
       const nb = ny < 0 ? B.STONE : ny >= H ? B.AIR : getBlock(nx, ny, nz);
@@ -680,7 +760,7 @@ function meshChunk(cx, cz) {
         if (axis === 0)      { lu = cr[2]; lv = cr[1]; }
         else if (axis === 1) { lu = cr[0]; lv = cr[2]; }
         else                 { lu = cr[0]; lv = cr[1]; }
-        if (id === B.WATER) {
+        if (id === B.WATER || id === B.LAVA) {
           grp.uv.push(lu, lv);
         } else {
           const iu = lu * (1 - 2 * INSET) + INSET, iv = lv * (1 - 2 * INSET) + INSET;
@@ -699,14 +779,16 @@ function meshChunk(cx, cz) {
           ao[ci] = (s1 && s2) ? 0 : 3 - (s1 + s2 + s3);
           aoF = AO_F[ao[ci]];
         }
-        const sh = f.shade * aoF;
+        let sh = f.shade * aoF;
+        // 深いほど暗くする（溶岩・鉱石の光は影響なし）
+        if (grp === groups.opaque && y < 16) sh *= Math.max(0.3, Math.min(1, 0.28 + y / 16));
         grp.col.push(sh, sh, sh);
       }
       if (ao[0] + ao[3] > ao[1] + ao[2]) grp.ind.push(vi, vi + 1, vi + 3, vi, vi + 3, vi + 2);
       else grp.ind.push(vi, vi + 1, vi + 2, vi + 2, vi + 1, vi + 3);
     }
   }
-  const mats = { opaque: matOpaque, water: matWater, glass: matGlass, glow: matGlow };
+  const mats = { opaque: matOpaque, water: matWater, glass: matGlass, glow: matGlow, lava: matLava };
   for (const name in groups) {
     const g = buildGeom(groups[name]);
     if (!g) continue;
@@ -848,7 +930,7 @@ search: for (let r = 0; r <= 14; r++) {
 const keys = {};
 let selected = 0;
 let dead = false, craftOpen = false;
-let lastDamageT = -99, regenAcc = 0, flashT = 0, kills = 0;
+let lastDamageT = -99, regenAcc = 0, flashT = 0, kills = 0, lavaAcc = 0;
 
 function aabbCollides(px, py, pz) {
   const x0 = Math.floor(px - player.W), x1 = Math.floor(px + player.W);
@@ -875,7 +957,9 @@ function physics(dt) {
   if (wish.lengthSq() > 1) wish.normalize();
   wish.multiplyScalar(speed);
 
-  const inWater = getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y + 0.4), Math.floor(player.pos.z)) === B.WATER;
+  const bodyBlock = getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y + 0.4), Math.floor(player.pos.z));
+  const inWater = bodyBlock === B.WATER, inLava = bodyBlock === B.LAVA;
+  if (inLava) { wish.x *= 0.45; wish.z *= 0.45; } // 溶岩は重い
 
   const accel = player.onGround || player.fly ? 14 : 5;
   player.vel.x += (wish.x - player.vel.x) * Math.min(1, accel * dt);
@@ -886,10 +970,10 @@ function physics(dt) {
     if (keys['Space']) vy += speed * 0.8;
     if (keys['KeyC']) vy -= speed * 0.8;
     player.vel.y += (vy - player.vel.y) * Math.min(1, 14 * dt);
-  } else if (inWater) {
-    player.vel.y -= 6 * dt;
-    if (keys['Space']) player.vel.y = Math.min(player.vel.y + 24 * dt, 3.4);
-    player.vel.y = Math.max(player.vel.y, -3.2);
+  } else if (inWater || inLava) {
+    player.vel.y -= (inLava ? 4 : 6) * dt;
+    if (keys['Space']) player.vel.y = Math.min(player.vel.y + 24 * dt, inLava ? 2.2 : 3.4);
+    player.vel.y = Math.max(player.vel.y, inLava ? -1.6 : -3.2);
   } else {
     player.vel.y -= 24 * dt;
     if (keys['Space'] && player.onGround) { player.vel.y = 8.4; player.onGround = false; }
@@ -916,6 +1000,12 @@ function physics(dt) {
     player.vel.y = 0;
   }
   if (p.y < -20) { p.y = 60; player.vel.set(0, 0, 0); }
+
+  // 溶岩ダメージ
+  if (inLava) {
+    lavaAcc += dt;
+    if (lavaAcc >= 0.65) { lavaAcc = 0; damagePlayer(3, null); }
+  } else lavaAcc = 0;
 
   camera.position.set(p.x, p.y + player.EYE, p.z);
   camera.rotation.set(0, 0, 0);
@@ -1440,7 +1530,7 @@ function raycast(maxDist = 6) {
   let face = [0, 0, 0], t = 0;
   while (t <= maxDist) {
     const id = getBlock(x, y, z);
-    if (id !== B.AIR && id !== B.WATER) return { x, y, z, id, face, t };
+    if (id !== B.AIR && id !== B.WATER && id !== B.LAVA) return { x, y, z, id, face, t };
     if (tX < tY && tX < tZ)      { x += stepX; t = tX; tX += tDX; face = [-stepX, 0, 0]; }
     else if (tY < tZ)            { y += stepY; t = tY; tY += tDY; face = [0, -stepY, 0]; }
     else                         { z += stepZ; t = tZ; tZ += tDZ; face = [0, 0, -stepZ]; }
@@ -1816,9 +1906,18 @@ function loop(now) {
     } else bb.style.display = 'none';
   }
 
-  // 水面アニメーション
+  // 水面・溶岩アニメーション
   waterTex.offset.x += dt * 0.015;
   waterTex.offset.y += dt * 0.008;
+  lavaTex.offset.x += dt * 0.008;
+  lavaTex.offset.y += dt * 0.004;
+
+  // 液体の中にいる時の画面エフェクト
+  {
+    const camBlock = getBlock(Math.floor(camera.position.x), Math.floor(camera.position.y), Math.floor(camera.position.z));
+    document.getElementById('lavaOverlay').style.opacity = camBlock === B.LAVA ? 1 : 0;
+    document.getElementById('waterOverlay').style.opacity = camBlock === B.WATER ? 1 : 0;
+  }
 
   for (const m of clouds) {
     m.position.x += m.userData.speed * dt;
