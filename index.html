@@ -112,6 +112,26 @@
   #weaponchip b { color: var(--accent2); font-size: 14px; }
   #weaponchip .atk { color: var(--danger); font-weight: 700; }
 
+  /* ---- boss bar ---- */
+  #bossbar {
+    position: fixed; top: 22px; left: 50%; transform: translateX(-50%);
+    width: min(540px, 72vw); z-index: 11; pointer-events: none; display: none;
+    background: var(--glass); border: 1px solid var(--glass-border);
+    backdrop-filter: blur(14px); border-radius: 14px; padding: 10px 16px 12px;
+  }
+  #bossbar .bname {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 13px; font-weight: 700; color: #e7ecf5; letter-spacing: .12em; margin-bottom: 7px;
+  }
+  #bossbar .bstate { font-size: 10.5px; letter-spacing: .2em; color: var(--accent); }
+  #bossbar.enraged .bstate { color: var(--danger); text-shadow: 0 0 10px rgba(244,63,94,0.8); }
+  #bossbar .bwrap { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.08); overflow: hidden; }
+  #bossbar .bfill {
+    height: 100%; border-radius: 5px; width: 100%;
+    background: linear-gradient(90deg, var(--accent2), var(--danger));
+    transition: width .25s; box-shadow: 0 0 12px rgba(244,63,94,0.5);
+  }
+
   /* ---- overlay ---- */
   #overlay {
     position: fixed; inset: 0; z-index: 20;
@@ -215,6 +235,10 @@
 <div id="hearts"></div>
 <div id="hotbar"></div>
 <div id="weaponchip"></div>
+<div id="bossbar">
+  <div class="bname"><span>👑 古代ゴーレム</span><span class="bstate">PASSIVE</span></div>
+  <div class="bwrap"><div class="bfill"></div></div>
+</div>
 
 <div id="overlay">
   <div id="card" class="card">
@@ -866,6 +890,8 @@ document.getElementById('respawnBtn').addEventListener('click', () => {
   player.pos.copy(spawnPoint);
   player.vel.set(0, 0, 0);
   renderHearts();
+  // ボスは鎮まり、全回復する
+  if (boss) { boss.enraged = false; boss.hp = boss.maxHp; }
   document.getElementById('deathPanel').classList.remove('show');
   renderer.domElement.requestPointerLock();
 });
@@ -1025,7 +1051,13 @@ const MOB_TYPES = {
     color: new THREE.Color(0x334155),
     drops: () => Math.random() < 0.5 ? [['core', 1]] : [['core', 1], ['glow', 1]],
   },
+  boss: {
+    name: '古代ゴーレム', hp: 60, dmg: 4, speed: 3.3, radius: 1.7, aggroR: 0,
+    color: new THREE.Color(0x8a8f94),
+    drops: () => [['core', 4], ['glow', 6], ['stone', 8]],
+  },
 };
+let boss = null;
 function buildMobMesh(type) {
   const g = new THREE.Group();
   const lam = (c, op) => {
@@ -1047,7 +1079,7 @@ function buildMobMesh(type) {
     e1.position.set(-0.18, 0.52, 0.46);
     const e2 = e1.clone(); e2.position.x = 0.18;
     g.add(e1, e2);
-  } else {
+  } else if (type === 'shadow') {
     g.add(box(0.68, 0.85, 0.55, lam(0x1e293b), 0, 0.85, 0));
     g.add(box(0.5, 0.45, 0.48, lam(0x0f172a), 0, 1.5, 0));
     g.add(box(0.1, 0.22, 0.1, lam(0x0f172a), -0.26, 1.85, 0));
@@ -1057,11 +1089,42 @@ function buildMobMesh(type) {
     e1.position.set(-0.13, 1.52, 0.26);
     const e2 = e1.clone(); e2.position.x = 0.13;
     g.add(e1, e2);
+  } else {
+    // ボス：古代ゴーレム（高さ約3.6ブロック）
+    const stone = 0x7d838a, dark = 0x5f6468;
+    const glowMats = [];
+    const glowMat = () => { const m = new THREE.MeshBasicMaterial({ color: 0x22d3ee }); glowMats.push(m); return m; };
+    const legL = box(0.55, 1.15, 0.6, lam(dark), -0.4, 0.575, 0);
+    const legR = box(0.55, 1.15, 0.6, lam(dark), 0.4, 0.575, 0);
+    g.add(legL, legR);
+    g.add(box(1.6, 1.35, 1.0, lam(stone), 0, 1.85, 0));                    // 胴体
+    g.add(box(1.9, 0.4, 1.1, lam(dark), 0, 2.6, 0));                       // 肩
+    const armL = box(0.5, 1.6, 0.55, lam(stone), -1.2, 1.85, 0);
+    const armR = box(0.5, 1.6, 0.55, lam(stone), 1.2, 1.85, 0);
+    g.add(armL, armR);
+    g.add(box(0.95, 0.8, 0.9, lam(stone), 0, 3.2, 0));                     // 頭
+    g.add(box(0.2, 0.35, 0.2, lam(dark), -0.55, 3.45, 0));                 // 角
+    g.add(box(0.2, 0.35, 0.2, lam(dark), 0.55, 3.45, 0));
+    const e1 = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.06), glowMat());
+    e1.position.set(-0.22, 3.25, 0.47);
+    const e2 = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.06), glowMat());
+    e2.position.set(0.22, 3.25, 0.47);
+    g.add(e1, e2);
+    // 胸のルーン
+    const r1 = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.6, 0.04), glowMat());
+    r1.position.set(0, 1.9, 0.52);
+    const r2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.04), glowMat());
+    r2.position.set(0, 2.15, 0.52);
+    const r3 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 0.04), glowMat());
+    r3.position.set(0, 1.62, 0.52);
+    g.add(r1, r2, r3);
+    g.userData.glowMats = glowMats;
+    g.userData.limbs = { legL, legR, armL, armR };
   }
   // HPバー（スプライトは常にカメラを向く）
   const barBg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x0a0e1f, depthTest: false }));
   barBg.scale.set(0.95, 0.1, 1);
-  barBg.position.y = type === 'slime' ? 1.25 : 2.3;
+  barBg.position.y = type === 'slime' ? 1.25 : type === 'boss' ? 4.3 : 2.3;
   barBg.renderOrder = 10;
   const barFg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xf43f5e, depthTest: false }));
   barFg.scale.set(0.9, 0.06, 1);
@@ -1085,9 +1148,21 @@ function spawnMobAt(type, x, z) {
     onGround: false, hopCd: Math.random(), atkCd: 0, flashT: 0,
     bobT: Math.random() * 10, wanderT: 0,
     wanderDir: new THREE.Vector3(),
+    enraged: false, swingT: 0,
   };
   mobs.push(mob);
   return mob;
+}
+function spawnBoss() {
+  if (boss) return;
+  for (let d = 55; d <= 90; d += 5) for (let a = 0; a < 12; a++) {
+    const ang = (a / 12) * Math.PI * 2 + d;
+    const x = Math.floor(spawnPoint.x + Math.cos(ang) * d) + 0.5;
+    const z = Math.floor(spawnPoint.z + Math.sin(ang) * d) + 0.5;
+    const h = heightAt(Math.floor(x), Math.floor(z));
+    if (h > SEA + 1 && h < 33) { boss = spawnMobAt('boss', x, z); return; }
+  }
+  boss = spawnMobAt('boss', spawnPoint.x + 60, spawnPoint.z); // 保険
 }
 function trySpawnMob() {
   if (mobs.length >= 12) return;
@@ -1108,7 +1183,14 @@ function hurtMob(mob, dmg, fromDir) {
   mob.hp -= dmg;
   mob.flashT = 1;
   blip(95, 0.08, 'sawtooth', 0.06, 0.7);
-  if (fromDir) {
+  if (mob.type === 'boss' && !mob.enraged && mob.hp > 0) {
+    // 手を出すと激怒する
+    mob.enraged = true;
+    toast('👑 <b>古代ゴーレム</b>が激怒した！');
+    blip(60, 0.6, 'sawtooth', 0.1, 0.5);
+    setTimeout(() => blip(45, 0.7, 'sawtooth', 0.09, 0.6), 200);
+  }
+  if (fromDir && mob.type !== 'boss') {
     mob.vel.x += fromDir.x * 6;
     mob.vel.z += fromDir.z * 6;
     if (mob.type === 'slime') mob.vel.y = 3.5;
@@ -1120,8 +1202,19 @@ function killMob(mob) {
   if (i < 0) return;
   mobs.splice(i, 1);
   scene.remove(mob.mesh);
-  burst(mob.pos.x - 0.5, mob.pos.y, mob.pos.z - 0.5, mob.t.color, 16);
-  blip(300, 0.22, 'triangle', 0.06, 0.35);
+  if (mob.type === 'boss') {
+    boss = null;
+    for (let j = 0; j < 3; j++)
+      burst(mob.pos.x - 0.5, mob.pos.y + j * 1.2, mob.pos.z - 0.5, mob.t.color, 22);
+    burst(mob.pos.x - 0.5, mob.pos.y + 1, mob.pos.z - 0.5, new THREE.Color(0x22d3ee), 20);
+    toast('🏆 <b>古代ゴーレム</b>を討伐した！');
+    blip(520, 0.15, 'sine', 0.07, 1.3);
+    setTimeout(() => blip(660, 0.15, 'sine', 0.07, 1.2), 130);
+    setTimeout(() => blip(880, 0.3, 'sine', 0.07, 1.0), 260);
+  } else {
+    burst(mob.pos.x - 0.5, mob.pos.y, mob.pos.z - 0.5, mob.t.color, 16);
+    blip(300, 0.22, 'triangle', 0.06, 0.35);
+  }
   kills++;
   for (const [m, n] of mob.t.drops()) gainMat(m, n);
 }
@@ -1132,8 +1225,11 @@ function updateMobs(dt) {
     const mob = mobs[i];
     const t = mob.t;
     const d = mob.pos.distanceTo(playerCenter);
-    if (d > 80) { scene.remove(mob.mesh); mobs.splice(i, 1); continue; }
-    const aggro = d < t.aggroR && !dead && locked; // ポーズ中は襲わない
+    if (d > 80 && mob.type !== 'boss') { scene.remove(mob.mesh); mobs.splice(i, 1); continue; }
+    // ボスは攻撃されない限り襲ってこない（ポーズ中はどの敵も襲わない）
+    const aggro = mob.type === 'boss'
+      ? (mob.enraged && !dead && locked)
+      : (d < t.aggroR && !dead && locked);
     mob.flashT = Math.max(0, mob.flashT - dt * 4);
     mob.atkCd -= dt;
     mob.bobT += dt;
@@ -1165,7 +1261,7 @@ function updateMobs(dt) {
       // 着地スクワッシュ
       const sq = mob.onGround ? 1 + Math.sin(mob.bobT * 6) * 0.04 : 1.12;
       mob.mesh.scale.set(2 - sq, sq, 2 - sq).multiplyScalar(0.5).addScalar(0.5);
-    } else {
+    } else if (mob.type === 'shadow') {
       // シャドウ：浮遊して滑らかに追跡
       let target;
       if (aggro) target = playerCenter;
@@ -1187,18 +1283,53 @@ function updateMobs(dt) {
       mob.vel.multiplyScalar(Math.max(0, 1 - 4 * dt)); // ノックバック減衰
       const gy = groundAt(mob.pos.x, mob.pos.z, mob.pos.y) + 0.4 + Math.sin(mob.bobT * 2.2) * 0.22;
       mob.pos.y += (gy - mob.pos.y) * Math.min(1, 4 * dt);
+    } else {
+      // ボス：激怒時のみ地上をのっしのっしと追ってくる
+      mob.swingT = Math.max(0, mob.swingT - dt);
+      const moving = aggro && d > 2.8;
+      if (moving) {
+        const dir = playerCenter.clone().sub(mob.pos).setY(0).normalize();
+        mob.pos.x += dir.x * t.speed * dt;
+        mob.pos.z += dir.z * t.speed * dt;
+      }
+      const gy = groundAt(mob.pos.x, mob.pos.z, mob.pos.y + 1);
+      mob.pos.y += (gy - mob.pos.y) * Math.min(1, 10 * dt);
+      // 手足のアニメーション
+      const L = mob.mesh.userData.limbs;
+      if (L) {
+        const sw = moving ? Math.sin(mob.bobT * 7) * 0.55 : Math.sin(mob.bobT * 1.2) * 0.06;
+        L.legL.rotation.x = sw;
+        L.legR.rotation.x = -sw;
+        if (mob.swingT > 0) {
+          const k = Math.sin((1 - mob.swingT / 0.5) * Math.PI);
+          L.armL.rotation.x = -k * 1.7;
+          L.armR.rotation.x = -k * 1.7;
+        } else {
+          L.armL.rotation.x = -sw * 0.8;
+          L.armR.rotation.x = sw * 0.8;
+        }
+      }
+      // ルーンと目の色（通常シアン⇄激怒レッド、脈動つき）
+      const gm = mob.mesh.userData.glowMats;
+      if (gm) {
+        const pulse = 0.75 + Math.sin(mob.bobT * (mob.enraged ? 10 : 2.2)) * 0.25;
+        for (const m of gm) m.color.setHex(mob.enraged ? 0xff3b5c : 0x22d3ee).multiplyScalar(pulse);
+      }
     }
 
     // プレイヤーへの攻撃
-    if (aggro && d < 1.7 && mob.atkCd <= 0) {
+    const atkRange = mob.type === 'boss' ? 3.4 : 1.7;
+    if (aggro && d < atkRange && mob.atkCd <= 0) {
       damagePlayer(t.dmg, mob.pos);
-      mob.atkCd = 1.1;
+      mob.atkCd = mob.type === 'boss' ? 1.5 : 1.1;
+      mob.swingT = 0.5;
+      if (mob.type === 'boss') blip(55, 0.25, 'sawtooth', 0.09, 0.6); // 地響き
     }
 
     // メッシュ更新
     mob.mesh.position.copy(mob.pos);
     const ang = Math.atan2(playerCenter.x - mob.pos.x, playerCenter.z - mob.pos.z);
-    if (aggro) mob.mesh.rotation.y = ang;
+    if (aggro || (mob.type === 'boss' && d < 12)) mob.mesh.rotation.y = ang; // ボスは近づくと見つめてくる
     mob.mesh.traverse(o => {
       if (o.userData.flashable && o.material && o.material.emissive)
         o.material.emissive.setRGB(mob.flashT * 0.9, mob.flashT * 0.1, mob.flashT * 0.15);
@@ -1218,7 +1349,7 @@ function raycastMobs(reach) {
   let best = null;
   for (const mob of mobs) {
     const center = mob.pos.clone();
-    center.y += mob.type === 'slime' ? 0.45 : 1.1;
+    center.y += mob.type === 'slime' ? 0.45 : mob.type === 'boss' ? 1.9 : 1.1;
     const rel = center.sub(camera.position);
     const t = rel.dot(_rayDir);
     if (t < 0.2 || t > reach) continue;
@@ -1422,6 +1553,7 @@ function chunkTick() {
       document.getElementById('loading').style.display = 'none';
       document.getElementById('playhint').style.display = 'block';
       for (let i = 0; i < 6; i++) trySpawnMob();
+      spawnBoss();
     }
   }
 }
@@ -1461,9 +1593,10 @@ function updateDay(dt) {
 
 /* ================= デバッグ ================= */
 window.NC = {
-  camera, player, scene, getBlock, setBlock, heightAt, chunks, mobs,
+  camera, player, scene, renderer, getBlock, setBlock, heightAt, chunks, mobs,
   spawnMobAt, inventory, owned, craftWeapon, equipWeapon, damagePlayer,
-  openCraft, closeCraft, hurtMob, raycastMobs,
+  openCraft, closeCraft, hurtMob, raycastMobs, spawnBoss,
+  boss: () => boss, chunkTick, updateMobs, updateDay,
   setTime: t => { dayT = t; },
   state: () => ({ equipped, hp: player.hp, kills, mobCount: mobs.length, inv: { ...inventory } }),
 };
@@ -1498,6 +1631,17 @@ function loop(now) {
   if (flashT > 0) {
     flashT = Math.max(0, flashT - dt * 2.2);
     document.getElementById('dmgflash').style.opacity = flashT * 0.85;
+  }
+
+  // ボスHPバー
+  {
+    const bb = document.getElementById('bossbar');
+    if (boss && locked && !dead && (boss.enraged || boss.pos.distanceTo(player.pos) < 18)) {
+      bb.style.display = 'block';
+      bb.classList.toggle('enraged', boss.enraged);
+      bb.querySelector('.bstate').textContent = boss.enraged ? 'ENRAGED' : 'PASSIVE';
+      bb.querySelector('.bfill').style.width = (Math.max(0, boss.hp) / boss.maxHp * 100) + '%';
+    } else bb.style.display = 'none';
   }
 
   // 水面アニメーション
