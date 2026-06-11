@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>NEOCRAFT — Modern Voxel Sandbox</title>
 <style>
   :root {
@@ -13,9 +13,9 @@
     --glass-border: rgba(255, 255, 255, 0.12);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e1f; }
-  body { font-family: 'Inter', 'Hiragino Sans', 'Yu Gothic UI', system-ui, sans-serif; user-select: none; }
-  canvas { display: block; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e1f; touch-action: none; }
+  body { font-family: 'Inter', 'Hiragino Sans', 'Yu Gothic UI', system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
 
   #vignette {
     position: fixed; inset: 0; pointer-events: none; z-index: 5;
@@ -132,6 +132,57 @@
     transition: width .25s; box-shadow: 0 0 12px rgba(244,63,94,0.5);
   }
 
+  /* ---- touch UI ---- */
+  #touchui { display: none; position: fixed; inset: 0; z-index: 12; pointer-events: none; }
+  #touchui > * { pointer-events: auto; }
+  #stickArea {
+    position: absolute; left: 20px; bottom: 120px;
+    width: 120px; height: 120px; border-radius: 50%;
+    background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border);
+    backdrop-filter: blur(8px);
+  }
+  #stickNub {
+    position: absolute; left: 50%; top: 50%; margin: -26px 0 0 -26px;
+    width: 52px; height: 52px; border-radius: 50%;
+    background: rgba(34,211,238,0.25); border: 1px solid rgba(34,211,238,0.5);
+    box-shadow: 0 0 14px rgba(34,211,238,0.3);
+  }
+  .tbtn {
+    position: absolute; border-radius: 50%;
+    background: var(--glass); border: 1px solid var(--glass-border);
+    backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px; color: #e7ecf5;
+  }
+  .tbtn.act { background: rgba(34,211,238,0.25); border-color: var(--accent); }
+  #btnAttack { right: 96px; bottom: 130px; width: 70px; height: 70px; font-size: 30px;
+    border-color: rgba(244,63,94,0.4); }
+  #btnJump   { right: 18px; bottom: 160px; width: 58px; height: 58px; }
+  #btnPlace  { right: 36px; bottom: 248px; width: 52px; height: 52px; }
+  #btnPause  { right: 12px; top: 12px; width: 42px; height: 42px; font-size: 17px; }
+  #btnCraft  { right: 64px; top: 12px; width: 42px; height: 42px; font-size: 19px; }
+  #btnFly    { right: 116px; top: 12px; width: 42px; height: 42px; font-size: 18px; }
+  #btnDown   { right: 168px; top: 12px; width: 42px; height: 42px; font-size: 17px; }
+  body.touch #toasts { top: 64px; }
+  body.touch #hotbar { pointer-events: auto; }
+
+  @media (max-width: 760px) {
+    .slot { width: 36px; height: 36px; border-radius: 8px; }
+    .slot .cube { inset: 6px; border-radius: 4px; }
+    .slot .key { font-size: 7px; top: 1px; left: 4px; }
+    .slot .name { display: none; }
+    #hotbar { gap: 5px; padding: 7px; bottom: 10px; border-radius: 12px; }
+    #hearts { bottom: 66px; }
+    .heart { font-size: 14px; }
+    #stats { font-size: 10px; padding: 7px 10px; line-height: 1.6; }
+    #weaponchip { bottom: auto; top: 64px; right: 12px; font-size: 10.5px; padding: 7px 12px; }
+    #bossbar { top: 62px; width: 80vw; }
+    #card { padding: 26px 22px; }
+    #card h1 { font-size: 32px; }
+    #controls { font-size: 11.5px; gap: 5px 12px; grid-template-columns: 1fr; max-width: 250px; }
+    #controls span b { min-width: 92px; font-size: 10.5px; }
+  }
+
   /* ---- overlay ---- */
   #overlay {
     position: fixed; inset: 0; z-index: 20;
@@ -238,6 +289,16 @@
 <div id="bossbar">
   <div class="bname"><span>👑 古代ゴーレム</span><span class="bstate">PASSIVE</span></div>
   <div class="bwrap"><div class="bfill"></div></div>
+</div>
+<div id="touchui">
+  <div id="stickArea"><div id="stickNub"></div></div>
+  <div id="btnAttack" class="tbtn">⚔️</div>
+  <div id="btnPlace" class="tbtn">🧱</div>
+  <div id="btnJump" class="tbtn">⬆️</div>
+  <div id="btnDown" class="tbtn">⬇️</div>
+  <div id="btnFly" class="tbtn">✈️</div>
+  <div id="btnCraft" class="tbtn">⚒️</div>
+  <div id="btnPause" class="tbtn">⏸</div>
 </div>
 
 <div id="overlay">
@@ -800,7 +861,7 @@ function aabbCollides(px, py, pz) {
 
 function physics(dt) {
   dt = Math.min(dt, 0.05);
-  const sprint = keys['ShiftLeft'] || keys['ShiftRight'];
+  const sprint = keys['ShiftLeft'] || keys['ShiftRight'] || joyMag > 0.92;
   const speed = player.fly ? 14 : sprint ? 8.4 : 5.4;
   const f = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   const r = new THREE.Vector3(-f.z, 0, f.x);
@@ -809,7 +870,10 @@ function physics(dt) {
   if (keys['KeyS']) wish.sub(f);
   if (keys['KeyD']) wish.add(r);
   if (keys['KeyA']) wish.sub(r);
-  if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(speed);
+  if (wish.lengthSq() > 0) wish.normalize();
+  wish.addScaledVector(f, -joy.y).addScaledVector(r, joy.x); // 仮想スティック
+  if (wish.lengthSq() > 1) wish.normalize();
+  wish.multiplyScalar(speed);
 
   const inWater = getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y + 0.4), Math.floor(player.pos.z)) === B.WATER;
 
@@ -881,7 +945,8 @@ function die() {
   player.hp = 0;
   renderHearts();
   blip(110, 0.5, 'sawtooth', 0.08, 0.3);
-  document.exitPointerLock();
+  if (IS_TOUCH) { playing = false; applyHud(); }
+  else document.exitPointerLock();
   document.getElementById('deathPanel').classList.add('show');
 }
 document.getElementById('respawnBtn').addEventListener('click', () => {
@@ -893,7 +958,8 @@ document.getElementById('respawnBtn').addEventListener('click', () => {
   // ボスは鎮まり、全回復する
   if (boss) { boss.enraged = false; boss.hp = boss.maxHp; }
   document.getElementById('deathPanel').classList.remove('show');
-  renderer.domElement.requestPointerLock();
+  if (IS_TOUCH) { playing = true; applyHud(); }
+  else renderer.domElement.requestPointerLock();
 });
 
 /* ================= 武器・合成 ================= */
@@ -978,12 +1044,14 @@ function openCraft() {
   craftOpen = true;
   renderCraft();
   document.getElementById('craftPanel').classList.add('show');
-  if (document.pointerLockElement) document.exitPointerLock();
+  if (IS_TOUCH) { playing = false; applyHud(); }
+  else if (document.pointerLockElement) document.exitPointerLock();
 }
 function closeCraft() {
   craftOpen = false;
   document.getElementById('craftPanel').classList.remove('show');
-  renderer.domElement.requestPointerLock();
+  if (IS_TOUCH) { playing = true; applyHud(); }
+  else renderer.domElement.requestPointerLock();
 }
 document.getElementById('craftClose').addEventListener('click', closeCraft);
 
@@ -1228,8 +1296,8 @@ function updateMobs(dt) {
     if (d > 80 && mob.type !== 'boss') { scene.remove(mob.mesh); mobs.splice(i, 1); continue; }
     // ボスは攻撃されない限り襲ってこない（ポーズ中はどの敵も襲わない）
     const aggro = mob.type === 'boss'
-      ? (mob.enraged && !dead && locked)
-      : (d < t.aggroR && !dead && locked);
+      ? (mob.enraged && !dead && playing)
+      : (d < t.aggroR && !dead && playing);
     mob.flashT = Math.max(0, mob.flashT - dt * 4);
     mob.atkCd -= dt;
     mob.bobT += dt;
@@ -1383,22 +1451,35 @@ function raycast(maxDist = 6) {
 /* ================= 入力 ================= */
 const overlay = document.getElementById('overlay');
 const card = document.getElementById('card');
-let locked = false, started = false;
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
+  || new URLSearchParams(location.search).has('touch');
+let locked = false, started = false, playing = false;
 let atkCd = 0;
+const joy = { x: 0, y: 0 };
+let joyMag = 0;
+
+function applyHud() {
+  const on = playing ? 1 : 0;
+  for (const id of ['crosshair', 'stats', 'hotbar', 'hearts', 'weaponchip'])
+    document.getElementById(id).style.opacity = on;
+  document.getElementById('touchui').style.display = playing && IS_TOUCH ? 'block' : 'none';
+  overlay.classList.toggle('hidden', playing || craftOpen || dead);
+}
+function startGame() {
+  playing = true;
+  if (!started) { started = true; blip(520, 0.12, 'sine', 0.06, 1.3); }
+  applyHud();
+}
 
 card.addEventListener('click', () => {
   if (!worldReady) return;
-  renderer.domElement.requestPointerLock();
+  if (IS_TOUCH) startGame();
+  else renderer.domElement.requestPointerLock();
 });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
-  overlay.classList.toggle('hidden', locked || craftOpen || dead);
-  const hud = locked ? 1 : 0;
-  document.getElementById('crosshair').style.opacity = hud;
-  document.getElementById('stats').style.opacity = hud;
-  document.getElementById('hotbar').style.opacity = hud;
-  document.getElementById('hearts').style.opacity = hud;
-  document.getElementById('weaponchip').style.opacity = hud;
+  if (!IS_TOUCH) playing = locked;
+  applyHud();
   if (locked && !started) { started = true; blip(520, 0.12, 'sine', 0.06, 1.3); }
 });
 document.addEventListener('mousemove', e => {
@@ -1412,10 +1493,10 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyE' && !dead && worldReady) {
     if (craftOpen) closeCraft();
-    else if (locked) openCraft();
+    else if (playing) openCraft();
     e.preventDefault();
   }
-  if (e.code === 'KeyF' && locked) { player.fly = !player.fly; player.vel.y = 0; blip(player.fly ? 700 : 400, 0.1, 'sine', 0.05, 1.2); }
+  if (e.code === 'KeyF' && playing) { player.fly = !player.fly; player.vel.y = 0; blip(player.fly ? 700 : 400, 0.1, 'sine', 0.05, 1.2); }
   if (/^Digit[1-9]$/.test(e.code)) { selected = +e.code.slice(5) - 1; renderHotbar(); }
 });
 document.addEventListener('keyup', e => keys[e.code] = false);
@@ -1425,53 +1506,139 @@ document.addEventListener('wheel', e => {
   renderHotbar();
 });
 document.addEventListener('contextmenu', e => e.preventDefault());
+function doAttack() {
+  if (atkCd > 0) return;
+  atkCd = 0.32;
+  swing();
+  const weapon = WEAPONS[equipped];
+  // まず敵への攻撃を判定
+  const mobHit = raycastMobs(weapon.reach);
+  const blockHit = raycast(6);
+  if (mobHit && (!blockHit || mobHit.t < blockHit.t)) {
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    hurtMob(mobHit.mob, weapon.atk, dir);
+    return;
+  }
+  if (blockHit && blockHit.y >= 1) {
+    burst(blockHit.x, blockHit.y, blockHit.z, DEFS[blockHit.id].c);
+    setBlock(blockHit.x, blockHit.y, blockHit.z, B.AIR);
+    blip(170, 0.09, 'square', 0.05, 0.5);
+    const m = BLOCK_MAT[blockHit.id];
+    if (m) gainMat(m, 1);
+  }
+}
+function doPlace() {
+  const hit = raycast();
+  if (!hit) return;
+  const px = hit.x + hit.face[0], py = hit.y + hit.face[1], pz = hit.z + hit.face[2];
+  const id = HOTBAR[selected];
+  const p = player.pos;
+  const overlap = isSolid(id) &&
+    px + 1 > p.x - player.W && px < p.x + player.W &&
+    pz + 1 > p.z - player.W && pz < p.z + player.W &&
+    py + 1 > p.y && py < p.y + player.HGT;
+  const cur = getBlock(px, py, pz);
+  if (!overlap && (cur === B.AIR || cur === B.WATER)) {
+    setBlock(px, py, pz, id);
+    blip(330, 0.07, 'square', 0.045, 1.15);
+    swing();
+  }
+}
+function doPick() {
+  const hit = raycast();
+  if (hit) {
+    const i = HOTBAR.indexOf(hit.id);
+    if (i >= 0) { selected = i; renderHotbar(); }
+  }
+}
 document.addEventListener('mousedown', e => {
   if (!locked || dead) return;
-  const weapon = WEAPONS[equipped];
-  if (e.button === 0) {
-    if (atkCd > 0) return;
-    atkCd = 0.32;
-    swing();
-    // まず敵への攻撃を判定
-    const mobHit = raycastMobs(weapon.reach);
-    const blockHit = raycast(6);
-    if (mobHit && (!blockHit || mobHit.t < blockHit.t)) {
-      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-      hurtMob(mobHit.mob, weapon.atk, dir);
-      return;
-    }
-    if (blockHit && blockHit.y >= 1) {
-      burst(blockHit.x, blockHit.y, blockHit.z, DEFS[blockHit.id].c);
-      setBlock(blockHit.x, blockHit.y, blockHit.z, B.AIR);
-      blip(170, 0.09, 'square', 0.05, 0.5);
-      const m = BLOCK_MAT[blockHit.id];
-      if (m) gainMat(m, 1);
-    }
-  } else if (e.button === 2) {
-    const hit = raycast();
-    if (!hit) return;
-    const px = hit.x + hit.face[0], py = hit.y + hit.face[1], pz = hit.z + hit.face[2];
-    const id = HOTBAR[selected];
-    const p = player.pos;
-    const overlap = isSolid(id) &&
-      px + 1 > p.x - player.W && px < p.x + player.W &&
-      pz + 1 > p.z - player.W && pz < p.z + player.W &&
-      py + 1 > p.y && py < p.y + player.HGT;
-    const cur = getBlock(px, py, pz);
-    if (!overlap && (cur === B.AIR || cur === B.WATER)) {
-      setBlock(px, py, pz, id);
-      blip(330, 0.07, 'square', 0.045, 1.15);
-      swing();
-    }
-  } else if (e.button === 1) {
-    const hit = raycast();
-    if (hit) {
-      const i = HOTBAR.indexOf(hit.id);
-      if (i >= 0) { selected = i; renderHotbar(); }
-    }
-    e.preventDefault();
-  }
+  if (e.button === 0) doAttack();
+  else if (e.button === 2) doPlace();
+  else if (e.button === 1) { doPick(); e.preventDefault(); }
 });
+
+/* ================= タッチ操作 ================= */
+if (IS_TOUCH) {
+  document.body.classList.add('touch');
+  document.getElementById('playhint').textContent = 'タップでスタート';
+  document.getElementById('controls').innerHTML = `
+    <span><b>左スティック</b>移動</span><span><b>画面ドラッグ</b>視点</span>
+    <span><b>⚔️</b>攻撃 / ブロック破壊</span><span><b>🧱</b>ブロック設置</span>
+    <span><b>⬆️</b>ジャンプ / 上昇</span><span><b>⬇️</b>（飛行中）下降</span>
+    <span><b>✈️</b>飛行モード切替</span><span><b>⚒️</b>武器の合成・装備</span>
+    <span><b>ホットバー</b>タップで選択</span><span><b>⏸</b>ポーズ</span>`;
+
+  const stickArea = document.getElementById('stickArea');
+  const stickNub = document.getElementById('stickNub');
+  let joyTouchId = null, lookTouchId = null, lookLX = 0, lookLY = 0;
+
+  function updateJoy(t) {
+    const rect = stickArea.getBoundingClientRect();
+    let dx = (t.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
+    let dy = (t.clientY - (rect.top + rect.height / 2)) / (rect.height / 2);
+    const m = Math.hypot(dx, dy);
+    if (m > 1) { dx /= m; dy /= m; }
+    joy.x = dx; joy.y = dy; joyMag = Math.min(1, m);
+    stickNub.style.transform = `translate(${dx * 34}px, ${dy * 34}px)`;
+  }
+  stickArea.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (joyTouchId === null) { joyTouchId = e.changedTouches[0].identifier; updateJoy(e.changedTouches[0]); }
+  }, { passive: false });
+
+  renderer.domElement.addEventListener('touchstart', e => {
+    if (!playing) return;
+    for (const t of e.changedTouches) {
+      if (lookTouchId === null && t.identifier !== joyTouchId) {
+        lookTouchId = t.identifier; lookLX = t.clientX; lookLY = t.clientY;
+      }
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyTouchId) { updateJoy(t); e.preventDefault(); }
+      else if (t.identifier === lookTouchId) {
+        player.yaw   -= (t.clientX - lookLX) * 0.006;
+        player.pitch -= (t.clientY - lookLY) * 0.006;
+        player.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, player.pitch));
+        lookLX = t.clientX; lookLY = t.clientY;
+        e.preventDefault();
+      }
+    }
+  }, { passive: false });
+  const endTouch = e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyTouchId) {
+        joyTouchId = null; joy.x = joy.y = 0; joyMag = 0;
+        stickNub.style.transform = '';
+      }
+      if (t.identifier === lookTouchId) lookTouchId = null;
+    }
+  };
+  document.addEventListener('touchend', endTouch);
+  document.addEventListener('touchcancel', endTouch);
+
+  function bindBtn(id, down, up) {
+    const el = document.getElementById(id);
+    el.addEventListener('touchstart', e => {
+      e.preventDefault(); e.stopPropagation();
+      el.classList.add('act'); down();
+    }, { passive: false });
+    el.addEventListener('touchend', e => {
+      e.preventDefault();
+      el.classList.remove('act'); if (up) up();
+    }, { passive: false });
+  }
+  bindBtn('btnAttack', () => { if (playing && !dead) doAttack(); });
+  bindBtn('btnPlace',  () => { if (playing && !dead) doPlace(); });
+  bindBtn('btnJump',   () => keys['Space'] = true, () => keys['Space'] = false);
+  bindBtn('btnDown',   () => keys['KeyC'] = true,  () => keys['KeyC'] = false);
+  bindBtn('btnFly',    () => { if (playing) { player.fly = !player.fly; player.vel.y = 0; blip(player.fly ? 700 : 400, 0.1, 'sine', 0.05, 1.2); } });
+  bindBtn('btnCraft',  () => { if (!dead && worldReady) craftOpen ? closeCraft() : openCraft(); });
+  bindBtn('btnPause',  () => { playing = false; applyHud(); });
+}
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -1480,12 +1647,16 @@ addEventListener('resize', () => {
 
 /* ================= HUD ================= */
 function renderHotbar() {
-  document.getElementById('hotbar').innerHTML = HOTBAR.map((id, i) => `
+  const el = document.getElementById('hotbar');
+  el.innerHTML = HOTBAR.map((id, i) => `
     <div class="slot${i === selected ? ' sel' : ''}">
       <span class="key">${i + 1}</span>
       <div class="cube" style="background-image:url(${DEFS[id].thumb})"></div>
       <span class="name">${DEFS[id].name}</span>
     </div>`).join('');
+  // タッチ端末はタップで選択
+  el.querySelectorAll('.slot').forEach((s, i) =>
+    s.addEventListener('pointerdown', () => { selected = i; renderHotbar(); }));
 }
 renderHotbar();
 function renderHearts() {
@@ -1597,6 +1768,7 @@ window.NC = {
   spawnMobAt, inventory, owned, craftWeapon, equipWeapon, damagePlayer,
   openCraft, closeCraft, hurtMob, raycastMobs, spawnBoss,
   boss: () => boss, chunkTick, updateMobs, updateDay,
+  startGame, isPlaying: () => playing, isTouch: IS_TOUCH,
   setTime: t => { dayT = t; },
   state: () => ({ equipped, hp: player.hp, kills, mobCount: mobs.length, inv: { ...inventory } }),
 };
@@ -1610,7 +1782,7 @@ function loop(now) {
   prev = now;
 
   chunkTick();
-  if (locked && !dead) physics(dt);
+  if (playing && !dead) physics(dt);
   if (worldReady) updateMobs(dt);
   updateDay(dt);
   updateParticles(dt);
@@ -1636,7 +1808,7 @@ function loop(now) {
   // ボスHPバー
   {
     const bb = document.getElementById('bossbar');
-    if (boss && locked && !dead && (boss.enraged || boss.pos.distanceTo(player.pos) < 18)) {
+    if (boss && playing && !dead && (boss.enraged || boss.pos.distanceTo(player.pos) < 18)) {
       bb.style.display = 'block';
       bb.classList.toggle('enraged', boss.enraged);
       bb.querySelector('.bstate').textContent = boss.enraged ? 'ENRAGED' : 'PASSIVE';
@@ -1654,7 +1826,7 @@ function loop(now) {
     if (m.position.x - player.pos.x < -220) m.position.x += 440;
   }
 
-  if (locked) {
+  if (playing) {
     const mobHit = raycastMobs(WEAPONS[equipped].reach);
     const hit = raycast();
     if (hit && !mobHit) { hl.visible = true; hl.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5); }
