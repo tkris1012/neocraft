@@ -263,6 +263,16 @@
     border-radius: 9px; padding: 6px 12px; font-size: 12px; color: rgba(255,255,255,0.85);
   }
   .matchip b { color: var(--accent); font-variant-numeric: tabular-nums; }
+  #craftCard { max-height: 88vh; overflow-y: auto; scrollbar-width: thin; }
+  .csection {
+    text-align: left; font-size: 11px; letter-spacing: .22em; color: var(--accent);
+    margin: 14px 0 7px 4px; font-weight: 700;
+  }
+  .tablehint {
+    font-size: 11.5px; color: rgba(255,255,255,0.5); margin-top: 10px;
+    background: rgba(34,211,238,0.06); border: 1px dashed rgba(34,211,238,0.3);
+    border-radius: 10px; padding: 9px;
+  }
   .recipe {
     display: flex; align-items: center; gap: 12px;
     background: rgba(255,255,255,0.045); border: 1px solid var(--glass-border);
@@ -350,8 +360,8 @@
 
 <div id="craftPanel">
   <div class="card" id="craftCard">
-    <h2>WEAPON FORGE</h2>
-    <div class="csub">武器の合成と装備</div>
+    <h2>CRAFTING</h2>
+    <div class="csub">合成と装備 — 武器・道具・ブロック</div>
     <div id="matsRow"></div>
     <div id="recipes"></div>
     <button class="btn ghost" id="craftClose">閉じて再開（E）</button>
@@ -1251,18 +1261,42 @@ function breakTime(id) {
   return base;
 }
 
-function canCraft(id) {
-  const r = WEAPONS[id].recipe;
-  return Object.keys(r).every(m => inventory[m] >= r[m]);
+/* ---- レシピテーブル（データ駆動：ここに足すだけで追加できる） ----
+   kind: weapon=武器(装備可) / tool=道具(常時効果) / block=ブロック解放(ホットバーに追加)
+   table: true → 作業台の近く(3ブロック以内)でのみ合成可能 */
+const RECIPES = [
+  { id: 'bench',  kind: 'block',  name: '作業台',   icon: '🛠️', block: () => B.BENCH, cost: { wood: 4 }, desc: '設置して近くに立つと高度なレシピが解放' },
+  { id: 'plank',  kind: 'block',  name: '板材',     icon: '🪵', block: () => B.PLANK, cost: { wood: 2 }, desc: '建築用の木ブロック' },
+  { id: 'torch',  kind: 'block',  name: '松明',     icon: '🔥', block: () => B.TORCH, cost: { wood: 1, glow: 1 }, desc: '置くと周囲を照らす光源' },
+  { id: 'brick',  kind: 'block',  name: '石レンガ', icon: '🧱', block: () => B.BRICK, cost: { stone: 4 }, table: true, desc: '建築用の石ブロック' },
+  { id: 'furn',   kind: 'block',  name: 'かまど',   icon: '♨️', block: () => B.FURN, cost: { stone: 8 }, table: true, desc: '（今後：食料の調理に使用）' },
+  { id: 'pick',   kind: 'tool',   name: 'つるはし', icon: '⛏️', cost: { wood: 2, stone: 3 }, table: true, desc: '石系ブロックの採掘が3.5倍速' },
+  { id: 'axe',    kind: 'tool',   name: '斧',       icon: '🪓', cost: { wood: 3, stone: 1 }, table: true, desc: '木系ブロックの伐採が3.5倍速' },
+  { id: 'shovel', kind: 'tool',   name: 'シャベル', icon: '🧹', cost: { wood: 2, stone: 1 }, table: true, desc: '土・砂系の掘削が3.5倍速' },
+  { id: 'wood',   kind: 'weapon', name: '木の剣',   icon: '🗡️', cost: { wood: 3 } },
+  { id: 'stone',  kind: 'weapon', name: '石の剣',   icon: '⚔️', cost: { wood: 2, stone: 3 }, table: true },
+  { id: 'neon',   kind: 'weapon', name: 'ネオンブレード', icon: '🔷', cost: { stone: 2, glow: 3, core: 2 }, table: true },
+];
+function nearTable() {
+  const px = Math.floor(player.pos.x), py = Math.floor(player.pos.y), pz = Math.floor(player.pos.z);
+  for (let dx = -3; dx <= 3; dx++) for (let dy = -2; dy <= 2; dy++) for (let dz = -3; dz <= 3; dz++)
+    if (getBlock(px + dx, py + dy, pz + dz) === B.BENCH) return true;
+  return false;
 }
-function craftWeapon(id) {
-  if (owned[id] || !canCraft(id)) return false;
-  for (const m in WEAPONS[id].recipe) inventory[m] -= WEAPONS[id].recipe[m];
-  owned[id] = true;
-  toast(`⚒️ <b>${WEAPONS[id].name}</b> を合成した！`);
+const isCrafted = r =>
+  r.kind === 'block' ? hb().includes(r.block()) :
+  r.kind === 'tool' ? ownedTools[r.id] : !!owned[r.id];
+const canAfford = cost => Object.keys(cost).every(m => inventory[m] >= cost[m]);
+function craftRecipe(rid) {
+  const r = RECIPES.find(x => x.id === rid);
+  if (!r || isCrafted(r) || !canAfford(r.cost)) return false;
+  if (r.table && !nearTable()) return false;
+  for (const m in r.cost) inventory[m] -= r.cost[m];
+  if (r.kind === 'block') unlockBlock(r.block());
+  else if (r.kind === 'tool') { ownedTools[r.id] = true; toast(`${r.icon} <b>${r.name}</b>を作った！`); }
+  else { owned[r.id] = true; toast(`⚒️ <b>${r.name}</b>を合成した！`); equipWeapon(r.id); }
   blip(520, 0.1, 'sine', 0.06, 1.4);
   setTimeout(() => blip(780, 0.12, 'sine', 0.06, 1.2), 90);
-  equipWeapon(id);
   renderCraft();
   return true;
 }
@@ -1288,33 +1322,44 @@ function renderWeaponChip() {
 function renderCraft() {
   document.getElementById('matsRow').innerHTML = Object.keys(MAT_NAMES).map(m =>
     `<span class="matchip">${MAT_NAMES[m]} <b>×${inventory[m]}</b></span>`).join('');
-  const rows = ['wood', 'stone', 'neon'].map(id => {
-    const w = WEAPONS[id];
-    const req = Object.keys(w.recipe).map(m => {
-      const ok = inventory[m] >= w.recipe[m];
-      return `<span class="${ok ? 'have' : 'lack'}">${MAT_NAMES[m]} ${inventory[m]}/${w.recipe[m]}</span>`;
-    }).join('　');
-    let btn;
-    if (owned[id]) {
-      btn = equipped === id
-        ? `<button class="btn equipped">装備中</button>`
-        : `<button class="btn ghost" data-eq="${id}">装備する</button>`;
+  const table = nearTable();
+  const costHtml = cost => Object.keys(cost).map(m => {
+    const ok = inventory[m] >= cost[m];
+    return `<span class="${ok ? 'have' : 'lack'}">${MAT_NAMES[m]} ${inventory[m]}/${cost[m]}</span>`;
+  }).join('　');
+  const row = r => {
+    const done = isCrafted(r);
+    const w = WEAPONS[r.id];
+    let btn, sub;
+    if (done) {
+      if (r.kind === 'weapon') {
+        btn = equipped === r.id
+          ? `<button class="btn equipped">装備中</button>`
+          : `<button class="btn ghost" data-eq="${r.id}">装備する</button>`;
+      } else btn = `<button class="btn equipped">${r.kind === 'block' ? '解放済み' : '作成済み'}</button>`;
+      sub = r.desc || '合成済み';
     } else {
-      btn = `<button class="btn" data-craft="${id}" ${canCraft(id) ? '' : 'disabled'}>合成</button>`;
+      const needTable = r.table && !table;
+      btn = `<button class="btn" data-craft="${r.id}" ${(!needTable && canAfford(r.cost)) ? '' : 'disabled'}>合成</button>`;
+      sub = (needTable ? '<span class="lack">要・作業台の近く</span>　' : '') + costHtml(r.cost);
     }
-    return `<div class="recipe">
-      <div class="winfo">
-        <div class="wname">${w.name}<span class="atk">ATK ${w.atk}</span></div>
-        <div class="wreq">${owned[id] ? '合成済み' : '必要素材：' + req}</div>
-      </div>${btn}</div>`;
-  }).join('');
+    const atk = w ? `<span class="atk">ATK ${w.atk}</span>` : '';
+    return `<div class="recipe"><div class="winfo">
+      <div class="wname">${r.icon} ${r.name}${atk}</div>
+      <div class="wreq">${sub}</div></div>${btn}</div>`;
+  };
+  const section = (label, rs) => `<div class="csection">${label}</div>` + rs.map(row).join('');
   const fistBtn = equipped === 'fist'
     ? `<button class="btn equipped">装備中</button>`
     : `<button class="btn ghost" data-eq="fist">装備する</button>`;
   document.getElementById('recipes').innerHTML =
-    `<div class="recipe"><div class="winfo"><div class="wname">素手<span class="atk">ATK 1</span></div>
-     <div class="wreq">いつでも使える</div></div>${fistBtn}</div>` + rows;
-  document.querySelectorAll('[data-craft]').forEach(b => b.addEventListener('click', () => craftWeapon(b.dataset.craft)));
+    `<div class="recipe"><div class="winfo"><div class="wname">👊 素手<span class="atk">ATK 1</span></div>
+     <div class="wreq">いつでも使える</div></div>${fistBtn}</div>` +
+    section('武器', RECIPES.filter(r => r.kind === 'weapon')) +
+    section('道具', RECIPES.filter(r => r.kind === 'tool')) +
+    section('ブロック・設備', RECIPES.filter(r => r.kind === 'block')) +
+    (table ? '' : `<div class="tablehint">🛠️ 作業台を作って近くに置くと、すべてのレシピが解放されます</div>`);
+  document.querySelectorAll('[data-craft]').forEach(b => b.addEventListener('click', () => craftRecipe(b.dataset.craft)));
   document.querySelectorAll('[data-eq]').forEach(b => b.addEventListener('click', () => equipWeapon(b.dataset.eq)));
 }
 function openCraft() {
@@ -2417,7 +2462,7 @@ function updateDay(dt) {
 /* ================= デバッグ ================= */
 window.NC = {
   camera, player, scene, renderer, getBlock, setBlock, heightAt, chunks, mobs,
-  spawnMobAt, inventory, owned, craftWeapon, equipWeapon, damagePlayer,
+  spawnMobAt, inventory, owned, craftRecipe, craftWeapon: craftRecipe, equipWeapon, damagePlayer, RECIPES, nearTable,
   openCraft, closeCraft, hurtMob, raycastMobs, spawnBoss, spawnDragon, trySpawnCaveMob,
   boss: () => boss, dragon: () => dragon, chunkTick, updateMobs, updateDay,
   startGame, isPlaying: () => playing, isTouch: IS_TOUCH,
