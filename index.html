@@ -47,6 +47,15 @@
   #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
   #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
 
+  /* 破壊ゲージ（クロスヘア周りのリング） */
+  #breakGauge {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 42px; height: 42px; border-radius: 50%; z-index: 9; pointer-events: none;
+    opacity: 0; transition: opacity .1s;
+    -webkit-mask: radial-gradient(circle, transparent 14px, #000 15px);
+    mask: radial-gradient(circle, transparent 14px, #000 15px);
+  }
+
   #stats {
     position: fixed; top: 16px; left: 16px; z-index: 10; pointer-events: none;
     background: var(--glass); border: 1px solid var(--glass-border);
@@ -294,6 +303,7 @@
 <div id="lavaOverlay"></div>
 <div id="waterOverlay"></div>
 <div id="crosshair"></div>
+<div id="breakGauge"></div>
 <div id="stats"></div>
 <div id="toasts"></div>
 <div id="hearts"></div>
@@ -1215,6 +1225,32 @@ const WEAPONS = {
 const owned = { fist: true };
 let equipped = 'fist';
 
+/* ---- 道具と破壊速度 ---- */
+const TOOLS = {
+  pick:   { name: 'つるはし', icon: '⛏️', recipe: { wood: 2, stone: 3 } },
+  axe:    { name: '斧',       icon: '🪓', recipe: { wood: 3, stone: 1 } },
+  shovel: { name: 'シャベル', icon: '🧹', recipe: { wood: 2, stone: 1 } },
+};
+const ownedTools = { pick: false, axe: false, shovel: false };
+// ブロックの硬さ（素手での破壊秒数）
+const HARDNESS = {
+  [B.GRASS]: 0.7, [B.DIRT]: 0.6, [B.SAND]: 0.6, [B.SNOW]: 0.4,
+  [B.WOOD]: 1.4, [B.PLANK]: 1.2, [B.BENCH]: 1.2, [B.LEAF]: 0.25,
+  [B.STONE]: 2.2, [B.BRICK]: 2.2, [B.FURN]: 2.2, [B.GLOW]: 1.6, [B.DEEP]: 3.0,
+  [B.GLASS]: 0.25, [B.TORCH]: 0.1,
+};
+const TOOL_TARGETS = {
+  pick:   [B.STONE, B.BRICK, B.FURN, B.GLOW, B.DEEP],
+  axe:    [B.WOOD, B.PLANK, B.BENCH],
+  shovel: [B.GRASS, B.DIRT, B.SAND, B.SNOW],
+};
+function breakTime(id) {
+  const base = HARDNESS[id] !== undefined ? HARDNESS[id] : 1.0;
+  for (const tool in TOOL_TARGETS)
+    if (ownedTools[tool] && TOOL_TARGETS[tool].includes(id)) return base / 3.5; // 適正道具
+  return base;
+}
+
 function canCraft(id) {
   const r = WEAPONS[id].recipe;
   return Object.keys(r).every(m => inventory[m] >= r[m]);
@@ -2061,6 +2097,7 @@ card.addEventListener('click', () => {
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   if (!IS_TOUCH) playing = locked;
+  if (!locked) { holdL = false; breaking = null; }
   applyHud();
   if (locked && !started) { started = true; blip(520, 0.12, 'sine', 0.06, 1.3); }
 });
@@ -2088,25 +2125,50 @@ document.addEventListener('wheel', e => {
   renderHotbar();
 });
 document.addEventListener('contextmenu', e => e.preventDefault());
-function doAttack() {
-  if (atkCd > 0) return;
-  atkCd = 0.32;
-  swing();
+// 敵への攻撃（即時・クールダウンあり）。ヒットしたらtrue
+function tryMobAttack() {
+  if (atkCd > 0) return false;
   const weapon = WEAPONS[equipped];
-  // まず敵への攻撃を判定
   const mobHit = raycastMobs(weapon.reach);
   const blockHit = raycast(6);
   if (mobHit && (!blockHit || mobHit.t < blockHit.t)) {
+    atkCd = 0.32;
+    swing();
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     hurtMob(mobHit.mob, weapon.atk, dir);
-    return;
+    return true;
   }
-  if (blockHit && blockHit.y >= 1) {
-    burst(blockHit.x, blockHit.y, blockHit.z, DEFS[blockHit.id].c);
-    applyAction({ type: 'break', x: blockHit.x, y: blockHit.y, z: blockHit.z, playerId: LOCAL_PLAYER_ID });
+  return false;
+}
+/* ---- 長押し破壊（ゲージ式） ---- */
+let holdL = false;
+let breaking = null; // { x, y, z, progress, need }
+let breakTickAcc = 0;
+function updateBreaking(dt) {
+  const gauge = document.getElementById('breakGauge');
+  if (!holdL || !playing || dead) { breaking = null; gauge.style.opacity = 0; return; }
+  // 押しっぱなし中でも敵が射程に入れば優先して殴る
+  if (tryMobAttack()) { breaking = null; gauge.style.opacity = 0; return; }
+  const hit = raycast(6);
+  if (!hit || hit.y < 1) { breaking = null; gauge.style.opacity = 0; return; }
+  if (!breaking || breaking.x !== hit.x || breaking.y !== hit.y || breaking.z !== hit.z) {
+    breaking = { x: hit.x, y: hit.y, z: hit.z, progress: 0, need: breakTime(hit.id) };
+  }
+  breaking.progress += dt;
+  if (swingT <= 0.04) swing(); // 連続スイング
+  breakTickAcc += dt;
+  if (breakTickAcc >= 0.22) { breakTickAcc = 0; blip(120 + Math.random() * 40, 0.05, 'square', 0.03, 0.7); }
+  const ratio = Math.min(1, breaking.progress / breaking.need);
+  gauge.style.opacity = 1;
+  gauge.style.background = `conic-gradient(var(--accent) ${ratio * 360}deg, rgba(255,255,255,0.15) 0deg)`;
+  if (ratio >= 1) {
+    burst(hit.x, hit.y, hit.z, DEFS[hit.id].c);
+    applyAction({ type: 'break', x: hit.x, y: hit.y, z: hit.z, playerId: LOCAL_PLAYER_ID });
     blip(170, 0.09, 'square', 0.05, 0.5);
-    const m = BLOCK_MAT[blockHit.id];
+    const m = BLOCK_MAT[hit.id];
     if (m) gainMat(m, 1);
+    breaking = null;
+    gauge.style.opacity = 0;
   }
 }
 function doPlace() {
@@ -2136,9 +2198,12 @@ function doPick() {
 }
 document.addEventListener('mousedown', e => {
   if (!locked || dead) return;
-  if (e.button === 0) doAttack();
+  if (e.button === 0) { holdL = true; tryMobAttack(); }
   else if (e.button === 2) doPlace();
   else if (e.button === 1) { doPick(); e.preventDefault(); }
+});
+document.addEventListener('mouseup', e => {
+  if (e.button === 0) { holdL = false; breaking = null; }
 });
 
 /* ================= タッチ操作 ================= */
@@ -2214,7 +2279,9 @@ if (IS_TOUCH) {
       el.classList.remove('act'); if (up) up();
     }, { passive: false });
   }
-  bindBtn('btnAttack', () => { if (playing && !dead) doAttack(); });
+  bindBtn('btnAttack',
+    () => { if (playing && !dead) { holdL = true; tryMobAttack(); } },
+    () => { holdL = false; breaking = null; });
   bindBtn('btnPlace',  () => { if (playing && !dead) doPlace(); });
   bindBtn('btnJump',   () => keys['Space'] = true, () => keys['Space'] = false);
   bindBtn('btnDown',   () => keys['KeyC'] = true,  () => keys['KeyC'] = false);
@@ -2356,6 +2423,7 @@ window.NC = {
   startGame, isPlaying: () => playing, isTouch: IS_TOUCH,
   setPlaying: v => { playing = v; },
   applyAction, syncAdapter, worldChanges, remotePlayers, WORLD_SEED, unlockBlock, B,
+  ownedTools, TOOLS, breakTime, setHold: v => { holdL = v; },
   // ダミーのリモートプレイヤーを1体スポーンして円を描いて歩かせる（同期土台の動作確認用）
   spawnDummyPlayer: () => {
     const id = 'dummy-' + Math.floor(Math.random() * 1000);
@@ -2389,6 +2457,7 @@ function loop(now) {
   updateParticles(dt);
   updateViewModel(dt);
   if (atkCd > 0) atkCd -= dt;
+  updateBreaking(dt);
 
   // 敵スポーン
   spawnTimer -= dt;
