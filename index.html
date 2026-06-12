@@ -2666,13 +2666,12 @@ function updateDay(dt) {
 /* ================= Firebase同期（フェーズ3：マルチプレイ） =================
    READMEの手順でFirebaseプロジェクトを作り、FIREBASE_CONFIG に設定を貼ると
    同じシードのワールドに友達と入れる。null のままなら完全オフライン動作。 */
-const FIREBASE_CONFIG = null; /* 例:
 const FIREBASE_CONFIG = {
-  apiKey: "AIza...",
-  authDomain: "your-app.firebaseapp.com",
-  databaseURL: "https://your-app-default-rtdb.firebaseio.com",
-  projectId: "your-app",
-}; */
+  apiKey: "AIzaSyD5K3X9oDXLZlh9XZVZ6a5Px1SoJg09Y_o",
+  authDomain: "neocraft-4d3a2.firebaseapp.com",
+  databaseURL: "https://neocraft-4d3a2-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "neocraft-4d3a2",
+};
 async function initFirebase() {
   if (!FIREBASE_CONFIG) return;
   try {
