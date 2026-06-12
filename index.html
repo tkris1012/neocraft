@@ -801,14 +801,22 @@ function setBlock(x, y, z, id) {
    将来はこのアクションを Firebase RTDB にそのまま書き込み/購読するだけで同期が成立する。 */
 const LOCAL_PLAYER_ID = 'local';
 function applyAction(action, fromRemote = false) {
+  if (action.y < 1 || action.y >= H) return;
+  const prev = getBlock(action.x, action.y, action.z);
   if (action.type === 'place') {
-    if (action.y < 1 || action.y >= H) return;
     setBlock(action.x, action.y, action.z, action.block);
     worldChanges[`${action.x}_${action.y}_${action.z}`] = action.block;
   } else if (action.type === 'break') {
-    if (action.y < 1 || action.y >= H) return;
     setBlock(action.x, action.y, action.z, B.AIR);
     worldChanges[`${action.x}_${action.y}_${action.z}`] = B.AIR;
+  }
+  // 松明の設置/撤去は明かりが隣接チャンクに及ぶため周辺を再メッシュ
+  if (action.block === B.TORCH || prev === B.TORCH) {
+    const cx = Math.floor(action.x / CH), cz = Math.floor(action.z / CH);
+    for (let dcx = -1; dcx <= 1; dcx++) for (let dcz = -1; dcz <= 1; dcz++) {
+      const c = chunks.get(key(cx + dcx, cz + dcz));
+      if (c && c.meshed && !(dcx === 0 && dcz === 0)) meshChunk(cx + dcx, cz + dcz);
+    }
   }
   if (!fromRemote) syncAdapter.sendAction(action);
 }
@@ -890,10 +898,27 @@ function pushBoxGeom(grp, x0, y0, z0, x1, y1, z1, tile) {
   }
 }
 
+// 周辺チャンクから松明の位置を集める（簡易ライティング用）
+function collectTorches(cx, cz) {
+  const list = [];
+  for (let dcx = -1; dcx <= 1; dcx++) for (let dcz = -1; dcz <= 1; dcz++) {
+    const c = chunks.get(key(cx + dcx, cz + dcz));
+    if (!c) continue;
+    const ox = (cx + dcx) * CH, oz = (cz + dcz) * CH;
+    const d = c.data;
+    for (let i = 0; i < d.length; i++) if (d[i] === B.TORCH) {
+      const y = (i / (CH * CH)) | 0, rem = i % (CH * CH);
+      list.push([ox + (rem % CH) + 0.5, y + 0.4, oz + ((rem / CH) | 0) + 0.5]);
+    }
+  }
+  return list;
+}
+
 function meshChunk(cx, cz) {
   const c = ensureData(cx, cz);
   for (const m of c.meshes) { scene.remove(m); m.geometry.dispose(); }
   c.meshes = [];
+  const torches = collectTorches(cx, cz);
   const mk = () => ({ pos: [], nrm: [], col: [], uv: [], ind: [] });
   const groups = { opaque: mk(), water: mk(), glass: mk(), glow: mk(), lava: mk() };
   const ox = cx * CH, oz = cz * CH;
@@ -952,6 +977,16 @@ function meshChunk(cx, cz) {
         let sh = f.shade * aoF;
         // 深いほど暗くする（溶岩・鉱石の光は影響なし）
         if (grp === groups.opaque && y < 16) sh *= Math.max(0.3, Math.min(1, 0.28 + y / 16));
+        // 松明の明かり（半径7ブロック）
+        if (torches.length && grp === groups.opaque) {
+          let boost = 0;
+          const vx = wx + cr[0], vy = y + py, vz = wz + cr[2];
+          for (const t of torches) {
+            const dd = Math.abs(vx - t[0]) + Math.abs(vy - t[1]) + Math.abs(vz - t[2]);
+            if (dd < 7) { const b = 1 - dd / 7; if (b > boost) boost = b; }
+          }
+          if (boost > 0) sh = Math.min(1.25, sh + boost * 0.95);
+        }
         grp.col.push(sh, sh, sh);
       }
       if (ao[0] + ao[3] > ao[1] + ao[2]) grp.ind.push(vi, vi + 1, vi + 3, vi, vi + 3, vi + 2);
