@@ -673,6 +673,36 @@ lavaTex.generateMipmaps = false;
 lavaTex.wrapS = lavaTex.wrapT = THREE.RepeatWrapping;
 lavaTex.colorSpace = THREE.SRGBColorSpace;
 
+// Excelアイコン風テクスチャ（Excelソード/dbsheetブレード用）
+const excelCanvas = document.createElement('canvas');
+excelCanvas.width = excelCanvas.height = 64;
+{
+  const ctx = excelCanvas.getContext('2d');
+  ctx.clearRect(0, 0, 64, 64);
+  // 白いシート（右側）
+  ctx.fillStyle = '#f4f8f6';
+  ctx.fillRect(22, 6, 38, 52);
+  ctx.strokeStyle = '#b9d5c6';
+  ctx.lineWidth = 2;
+  for (let i = 1; i < 4; i++) {
+    ctx.beginPath(); ctx.moveTo(22, 6 + i * 13); ctx.lineTo(60, 6 + i * 13); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(22 + i * 9.5, 6); ctx.lineTo(22 + i * 9.5, 58); ctx.stroke();
+  }
+  // 緑の表紙（左側）
+  ctx.fillStyle = '#1d6f42';
+  ctx.beginPath();
+  ctx.roundRect(2, 2, 34, 60, 6);
+  ctx.fill();
+  // 白い「X」
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(11, 18); ctx.lineTo(27, 46); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(27, 18); ctx.lineTo(11, 46); ctx.stroke();
+}
+const excelTex = new THREE.CanvasTexture(excelCanvas);
+excelTex.colorSpace = THREE.SRGBColorSpace;
+
 // ホットバー用サムネイル
 function tileThumb(tc, tr) {
   const cv = document.createElement('canvas');
@@ -1347,6 +1377,8 @@ const WEAPONS = {
   wood:  { name: '木の剣',         atk: 2, reach: 3.4, recipe: { wood: 3 } },
   stone: { name: '石の剣',         atk: 4, reach: 3.4, recipe: { wood: 2, stone: 3 } },
   neon:  { name: 'ネオンブレード', atk: 7, reach: 3.8, recipe: { stone: 2, glow: 3, core: 2 } },
+  excel: { name: 'Excelソード', atk: 5, reach: 3.2 },  // アイコンを発射、着弾で爆発
+  dbs:   { name: 'dbsブレード', atk: 9, reach: 3.6 },  // 最強近接、斬撃でアイコンが弾ける
 };
 const owned = { fist: true };
 let equipped = 'fist';
@@ -1409,6 +1441,8 @@ const RECIPES = [
   { id: 'wood',   kind: 'weapon', name: '木の剣',   icon: '🗡️', cost: { wood: 3 } },
   { id: 'stone',  kind: 'weapon', name: '石の剣',   icon: '⚔️', cost: { wood: 2, stone: 3 }, table: true },
   { id: 'neon',   kind: 'weapon', name: 'ネオンブレード', icon: '🔷', cost: { stone: 2, glow: 3, core: 2 }, table: true },
+  { id: 'excel', kind: 'weapon', name: 'Excelソード', icon: '📊', cost: { glow: 5, core: 3 }, table: true },
+  { id: 'dbs',   kind: 'weapon', name: 'dbsブレード', icon: '📗', cost: { wood: 2, glow: 3, core: 4 }, table: true },
 ];
 function nearBlockOf(id) {
   const px = Math.floor(player.pos.x), py = Math.floor(player.pos.y), pz = Math.floor(player.pos.z);
@@ -1557,20 +1591,30 @@ function buildViewModel() {
   } else {
     // 剣：柄 + 鍔 + 刃
     const colors = {
-      wood:  { blade: 0x9a7a52, edge: 0xb59879, guard: 0x6e4f33 },
-      stone: { blade: 0x9aa1a9, edge: 0xc2c8ce, guard: 0x5f6468 },
-      neon:  { blade: 0x22d3ee, edge: 0xa5f3fc, guard: 0x0e7490 },
+      wood:    { blade: 0x9a7a52, edge: 0xb59879, guard: 0x6e4f33 },
+      stone:   { blade: 0x9aa1a9, edge: 0xc2c8ce, guard: 0x5f6468 },
+      neon:    { blade: 0x22d3ee, edge: 0xa5f3fc, guard: 0x0e7490 },
+      excel: { blade: 0x21a366, edge: 0x9fe3c0, guard: 0x185c37 },
+      dbs:   { blade: 0x107c41, edge: 0xd9ffe8, guard: 0x0b5c30 },
     }[equipped];
-    const bladeMat = equipped === 'neon' ? bas(colors.blade) : lam(colors.blade);
-    const edgeMat  = equipped === 'neon' ? bas(colors.edge)  : lam(colors.edge);
+    const glowy = equipped === 'neon' || equipped === 'excel' || equipped === 'dbs';
+    const bladeMat = glowy ? bas(colors.blade) : lam(colors.blade);
+    const edgeMat  = glowy ? bas(colors.edge)  : lam(colors.edge);
     viewModel.add(box(0.05, 0.2, 0.05, lam(0x3b2a1a), 0, -0.32, 0));   // 柄
     viewModel.add(box(0.2, 0.05, 0.07, lam(colors.guard), 0, -0.2, 0)); // 鍔
     viewModel.add(box(0.085, 0.5, 0.035, bladeMat, 0, 0.07, 0));        // 刃
     viewModel.add(box(0.03, 0.52, 0.036, edgeMat, 0.045, 0.06, 0));     // 刃先
     viewModel.add(box(0.06, 0.1, 0.04, bladeMat, 0, 0.36, 0));          // 切先
-    if (equipped === 'neon') {
-      const glow = box(0.16, 0.6, 0.1, new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.18 }), 0, 0.07, 0);
+    if (glowy) {
+      const glow = box(0.16, 0.6, 0.1, new THREE.MeshBasicMaterial({ color: colors.blade, transparent: true, opacity: 0.18 }), 0, 0.07, 0);
       viewModel.add(glow);
+    }
+    if (equipped === 'excel' || equipped === 'dbs') {
+      // 刀身にExcelアイコンを浮かべる
+      const icon = new THREE.Sprite(new THREE.SpriteMaterial({ map: excelTex, transparent: true, depthTest: false }));
+      icon.scale.setScalar(0.16);
+      icon.position.set(0, 0.2, 0.05);
+      viewModel.add(icon);
     }
   }
   viewModel.position.set(0.5, -0.5, -0.85);
@@ -1632,19 +1676,65 @@ function buildPlayerMesh(name) {
   tag.position.y = 2.1;
   tag.renderOrder = 12;
   g.add(tag);
+  // 防具オーバーレイ（装備同期で表示切替）
+  const armorMat = new THREE.MeshLambertMaterial({ color: 0x9aa1a9 });
+  const helmO = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.3, 0.48), armorMat);
+  helmO.position.set(0, 1.68, 0); helmO.visible = false;
+  const chestO = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.56, 0.34), armorMat);
+  chestO.position.set(0, 1.03, 0); chestO.visible = false;
+  const legO = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.4, 0.3), armorMat);
+  legO.position.set(0, 0.45, 0); legO.visible = false;
+  g.add(helmO, chestO, legO);
+  // 右手の武器マウント（装備同期でモデル差し替え）
+  const hand = new THREE.Group();
+  hand.position.set(0.36, 0.66, 0.14);
+  hand.rotation.x = -0.6;
+  g.add(hand);
   g.userData.limbs = { legL, legR, armL, armR };
+  g.userData.armor = { helmO, chestO, legO };
+  g.userData.hand = hand;
   return g;
+}
+// 装備の見た目を反映（eq=武器ID, ar=防具ビット 1:兜 2:鎧 4:脚甲）
+function applyPlayerGear(rp, eq, ar) {
+  if (rp.eq === eq && rp.ar === ar) return;
+  rp.eq = eq; rp.ar = ar;
+  const u = rp.mesh.userData;
+  u.armor.helmO.visible  = !!(ar & 1);
+  u.armor.chestO.visible = !!(ar & 2);
+  u.armor.legO.visible   = !!(ar & 4);
+  while (u.hand.children.length) {
+    const c = u.hand.children.pop();
+    if (c.material && c.material.dispose) c.material.dispose();
+  }
+  if (eq && eq !== 'fist' && WEAPONS[eq]) {
+    const col = { wood: 0x9a7a52, stone: 0xc2c8ce, neon: 0x22d3ee, excel: 0x21a366, dbs: 0x107c41 }[eq] || 0xffffff;
+    const glowy = eq === 'neon' || eq === 'excel' || eq === 'dbs';
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.55, 0.07),
+      glowy ? new THREE.MeshBasicMaterial({ color: col }) : new THREE.MeshLambertMaterial({ color: col }));
+    blade.position.y = 0.32;
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.09), new THREE.MeshLambertMaterial({ color: 0x3b2a1a }));
+    guard.position.y = 0.06;
+    u.hand.add(blade, guard);
+    if (eq === 'excel' || eq === 'dbs') {
+      const icon = new THREE.Sprite(new THREE.SpriteMaterial({ map: excelTex, transparent: true }));
+      icon.scale.setScalar(0.2);
+      icon.position.set(0, 0.45, 0);
+      u.hand.add(icon);
+    }
+  }
 }
 function upsertRemotePlayer(p) {
   let rp = remotePlayers.get(p.id);
   if (!rp) {
     const mesh = buildPlayerMesh(p.name || 'Player');
     scene.add(mesh);
-    rp = { id: p.id, name: p.name, pos: new THREE.Vector3(p.x, p.y, p.z), target: new THREE.Vector3(p.x, p.y, p.z), yaw: p.yaw || 0, targetYaw: p.yaw || 0, mesh, walkT: 0 };
+    rp = { id: p.id, name: p.name, pos: new THREE.Vector3(p.x, p.y, p.z), target: new THREE.Vector3(p.x, p.y, p.z), yaw: p.yaw || 0, targetYaw: p.yaw || 0, mesh, walkT: 0, eq: 'fist', ar: 0 };
     remotePlayers.set(p.id, rp);
   }
   rp.target.set(p.x, p.y, p.z);
   rp.targetYaw = p.yaw || 0;
+  applyPlayerGear(rp, p.eq || 'fist', p.ar || 0);
   return rp;
 }
 function removeRemotePlayer(id) {
@@ -1673,7 +1763,12 @@ function presenceTick(dt) {
   presenceTimer -= dt;
   if (presenceTimer > 0) return;
   presenceTimer = 0.25;
-  syncAdapter.sendPresence({ id: LOCAL_PLAYER_ID, x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw });
+  syncAdapter.sendPresence({
+    id: LOCAL_PLAYER_ID,
+    x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw,
+    eq: equipped,
+    ar: (ownedArmor.helm ? 1 : 0) | (ownedArmor.chest ? 2 : 0) | (ownedArmor.legs ? 4 : 0),
+  });
 }
 
 /* ================= ザコ敵 ================= */
@@ -2286,6 +2381,82 @@ function updateFireballs(dt) {
   }
 }
 
+/* ================= Excelアイコンエフェクト＆弾（Excelソード/dbsheetブレード） ================= */
+const iconParts = []; // 弾けるアイコン
+function iconBurst(x, y, z, n = 12, big = false) {
+  for (let i = 0; i < n; i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: excelTex, transparent: true }));
+    sp.scale.setScalar((big ? 0.42 : 0.3) * (0.8 + Math.random() * 0.5));
+    sp.position.set(x, y, z);
+    sp.material.rotation = Math.random() * Math.PI;
+    iconParts.push({
+      sp,
+      vel: new THREE.Vector3((Math.random() - 0.5) * 8, Math.random() * 6 + 2, (Math.random() - 0.5) * 8),
+      life: 0.7 + Math.random() * 0.35,
+      spin: (Math.random() - 0.5) * 16,
+    });
+    scene.add(sp);
+  }
+}
+function updateIconParts(dt) {
+  for (let i = iconParts.length - 1; i >= 0; i--) {
+    const p = iconParts[i];
+    p.life -= dt;
+    if (p.life <= 0) { scene.remove(p.sp); p.sp.material.dispose(); iconParts.splice(i, 1); continue; }
+    p.vel.y -= 15 * dt;
+    p.sp.position.addScaledVector(p.vel, dt);
+    p.sp.material.rotation += p.spin * dt;
+    p.sp.material.opacity = Math.min(1, p.life * 2.2);
+  }
+}
+// Excelソードの弾
+const excelShots = [];
+function fireExcelShot() {
+  const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: excelTex, transparent: true }));
+  sp.scale.setScalar(0.55);
+  sp.position.copy(camera.position).addScaledVector(dir, 0.9);
+  sp.position.y -= 0.12;
+  excelShots.push({ sp, vel: dir.clone().multiplyScalar(18), life: 2.2 });
+  scene.add(sp);
+  blip(720, 0.07, 'square', 0.05, 1.7); // ピコッ
+}
+function explodeShot(s, hitMob) {
+  const p = s.sp.position;
+  iconBurst(p.x, p.y, p.z, 16, true);
+  blip(95, 0.3, 'sawtooth', 0.09, 0.4);  // ドカン
+  setTimeout(() => blip(60, 0.25, 'sawtooth', 0.07, 0.5), 60);
+  // 爆発の範囲ダメージ（直撃した敵はフルダメージ、巻き込みは3）
+  for (const mob of [...mobs]) {
+    if (mob.pos.distanceTo(p) > 2.6) continue;
+    const dir = mob.pos.clone().sub(p).setY(0).normalize();
+    hurtMob(mob, mob === hitMob ? WEAPONS.excel.atk : 3, dir);
+  }
+}
+function updateExcelShots(dt) {
+  for (let i = excelShots.length - 1; i >= 0; i--) {
+    const s = excelShots[i];
+    s.life -= dt;
+    s.sp.position.addScaledVector(s.vel, dt);
+    s.sp.material.rotation += 9 * dt;
+    const p = s.sp.position;
+    let done = false;
+    // 敵にヒット？
+    for (const mob of mobs) {
+      const c = mob.pos.clone();
+      c.y += mob.type === 'slime' || mob.type === 'magma' ? 0.45 : mob.type === 'boss' ? 1.9 : mob.type === 'dragon' ? 0.3 : 1.0;
+      if (c.distanceTo(p) < mob.t.radius + 0.45) { explodeShot(s, mob); done = true; break; }
+    }
+    // 壁にヒット？
+    if (!done && isSolid(getBlock(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)))) { explodeShot(s, null); done = true; }
+    if (done || s.life <= 0) {
+      scene.remove(s.sp);
+      s.sp.material.dispose();
+      excelShots.splice(i, 1);
+    }
+  }
+}
+
 // 視線上のモブ判定
 const _rayDir = new THREE.Vector3();
 function raycastMobs(reach) {
@@ -2388,6 +2559,13 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 // 敵への攻撃（即時・クールダウンあり）。ヒットしたらtrue
 function tryMobAttack() {
   if (atkCd > 0) return false;
+  // Excelソード：近接の代わりにアイコンを発射（長押しで連射）
+  if (equipped === 'excel') {
+    atkCd = 0.45;
+    swing();
+    fireExcelShot();
+    return true;
+  }
   const weapon = WEAPONS[equipped];
   const mobHit = raycastMobs(weapon.reach);
   const blockHit = raycast(6);
@@ -2396,6 +2574,13 @@ function tryMobAttack() {
     swing();
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     hurtMob(mobHit.mob, weapon.atk, dir);
+    // dbsブレード：斬撃でアイコンが弾ける
+    if (equipped === 'dbs') {
+      const c = mobHit.mob.pos;
+      iconBurst(c.x, c.y + 1, c.z, 10);
+      blip(1200, 0.09, 'triangle', 0.05, 1.5); // シャキーン
+      setTimeout(() => blip(1700, 0.07, 'triangle', 0.04, 1.3), 60);
+    }
     return true;
   }
   return false;
@@ -2407,6 +2592,13 @@ let breakTickAcc = 0;
 function updateBreaking(dt) {
   const gauge = document.getElementById('breakGauge');
   if (!holdL || !playing || dead) { breaking = null; gauge.style.opacity = 0; return; }
+  // Excelソード装備中は長押し＝連射（採掘するには他の武器に持ち替える）
+  if (equipped === 'excel') {
+    if (atkCd <= 0) tryMobAttack();
+    breaking = null;
+    gauge.style.opacity = 0;
+    return;
+  }
   // 押しっぱなし中でも敵が射程に入れば優先して殴る
   if (tryMobAttack()) { breaking = null; gauge.style.opacity = 0; return; }
   const hit = raycast(6);
@@ -2741,6 +2933,7 @@ async function initFirebase() {
     };
     syncAdapter.sendPresence = p => set(myRef, {
       name, x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2),
+      eq: p.eq || 'fist', ar: p.ar || 0,
     });
     // --- 受信：ブロック差分 ---
     const applyChange = snap => {
@@ -2768,7 +2961,7 @@ async function initFirebase() {
         if (ch.key === uid) return;
         seen.add(ch.key);
         const v = ch.val();
-        upsertRemotePlayer({ id: ch.key, name: v.name, x: v.x, y: v.y, z: v.z, yaw: v.yaw });
+        upsertRemotePlayer({ id: ch.key, name: v.name, x: v.x, y: v.y, z: v.z, yaw: v.yaw, eq: v.eq, ar: v.ar });
       });
       for (const id of [...remotePlayers.keys()])
         if (id.indexOf('dummy-') !== 0 && !seen.has(id)) removeRemotePlayer(id);
@@ -2844,16 +3037,19 @@ window.NC = {
   aabbCollides, collideBoxes, SHAPE_BOXES,
   ownedTools, TOOLS, ownedArmor, armorCount, breakTime, setHold: v => { holdL = v; },
   saveGame, loadGame, clearSave: () => localStorage.removeItem(SAVE_KEY),
-  renderPlayerList,
+  renderPlayerList, fireExcelShot, iconBurst,
+  excelShots: () => excelShots.length, iconParts: () => iconParts.length,
   // ダミーのリモートプレイヤーを1体スポーンして円を描いて歩かせる（同期土台の動作確認用）
   spawnDummyPlayer: () => {
     const id = 'dummy-' + Math.floor(Math.random() * 1000);
     const cx = player.pos.x, cz = player.pos.z;
     let a = 0;
+    const eqs = ['wood', 'stone', 'neon', 'excel', 'dbs'];
+    const eq = eqs[(Math.random() * eqs.length) | 0];
     const timer = setInterval(() => {
       a += 0.08;
       const x = cx + Math.cos(a) * 4, z = cz + Math.sin(a) * 4;
-      syncAdapter.simulateRemotePresence({ id, name: 'フレンド', x, y: groundAt(x, z), z, yaw: a + Math.PI / 2 });
+      syncAdapter.simulateRemotePresence({ id, name: 'フレンド', x, y: groundAt(x, z), z, yaw: a + Math.PI / 2, eq, ar: 7 });
     }, 250); // 本番と同じ毎秒4回の受信を想定
     return { id, stop: () => { clearInterval(timer); removeRemotePlayer(id); } };
   },
@@ -2888,6 +3084,8 @@ function loop(now) {
     spawnTimer = 3;
   }
   updateFireballs(dt);
+  updateExcelShots(dt);
+  updateIconParts(dt);
 
   // オートセーブ（10秒ごと）
   if (started) {
