@@ -346,7 +346,8 @@
       <span><b>左クリック</b>攻撃 / 破壊</span>
       <span><b>右クリック</b>ブロック設置</span>
       <span><b>1–9 / ホイール</b>ブロック選択</span>
-      <span><b>E</b>武器の合成・装備</span>
+      <span><b>E</b>クラフト・装備</span>
+      <span><b>Q</b>焼き肉を食べる</span>
       <span><b>F</b>飛行モード切替</span>
       <span><b>C</b>（飛行中）下降</span>
     </div>
@@ -1261,8 +1262,8 @@ document.getElementById('respawnBtn').addEventListener('click', () => {
 });
 
 /* ================= 武器・合成 ================= */
-const MAT_NAMES = { wood: '木材', stone: '石', glow: 'グロウストーン', core: '闇のコア' };
-const inventory = { wood: 0, stone: 0, glow: 0, core: 0 };
+const MAT_NAMES = { wood: '木材', stone: '石', glow: 'グロウストーン', core: '闇のコア', rawmeat: '生肉', meat: '焼き肉' };
+const inventory = { wood: 0, stone: 0, glow: 0, core: 0, rawmeat: 0, meat: 0 };
 const WEAPONS = {
   fist:  { name: '素手',           atk: 1, reach: 3.0 },
   wood:  { name: '木の剣',         atk: 2, reach: 3.4, recipe: { wood: 3 } },
@@ -1309,7 +1310,8 @@ const RECIPES = [
   { id: 'plank',  kind: 'block',  name: '板材',     icon: '🪵', block: () => B.PLANK, cost: { wood: 2 }, desc: '建築用の木ブロック' },
   { id: 'torch',  kind: 'block',  name: '松明',     icon: '🔥', block: () => B.TORCH, cost: { wood: 1, glow: 1 }, desc: '置くと周囲を照らす光源' },
   { id: 'brick',  kind: 'block',  name: '石レンガ', icon: '🧱', block: () => B.BRICK, cost: { stone: 4 }, table: true, desc: '建築用の石ブロック' },
-  { id: 'furn',   kind: 'block',  name: 'かまど',   icon: '♨️', block: () => B.FURN, cost: { stone: 8 }, table: true, desc: '（今後：食料の調理に使用）' },
+  { id: 'furn',   kind: 'block',  name: 'かまど',   icon: '♨️', block: () => B.FURN, cost: { stone: 8 }, table: true, desc: '置いて近くに立つと調理ができる' },
+  { id: 'cook',   kind: 'food',   name: '焼き肉',   icon: '🍖', cost: { rawmeat: 1, wood: 1 }, furnace: true, desc: 'かまどの近くで調理。食べるとHP+6' },
   { id: 'pick',   kind: 'tool',   name: 'つるはし', icon: '⛏️', cost: { wood: 2, stone: 3 }, table: true, desc: '石系ブロックの採掘が3.5倍速' },
   { id: 'axe',    kind: 'tool',   name: '斧',       icon: '🪓', cost: { wood: 3, stone: 1 }, table: true, desc: '木系ブロックの伐採が3.5倍速' },
   { id: 'shovel', kind: 'tool',   name: 'シャベル', icon: '🧹', cost: { wood: 2, stone: 1 }, table: true, desc: '土・砂系の掘削が3.5倍速' },
@@ -1320,12 +1322,14 @@ const RECIPES = [
   { id: 'stone',  kind: 'weapon', name: '石の剣',   icon: '⚔️', cost: { wood: 2, stone: 3 }, table: true },
   { id: 'neon',   kind: 'weapon', name: 'ネオンブレード', icon: '🔷', cost: { stone: 2, glow: 3, core: 2 }, table: true },
 ];
-function nearTable() {
+function nearBlockOf(id) {
   const px = Math.floor(player.pos.x), py = Math.floor(player.pos.y), pz = Math.floor(player.pos.z);
   for (let dx = -3; dx <= 3; dx++) for (let dy = -2; dy <= 2; dy++) for (let dz = -3; dz <= 3; dz++)
-    if (getBlock(px + dx, py + dy, pz + dz) === B.BENCH) return true;
+    if (getBlock(px + dx, py + dy, pz + dz) === id) return true;
   return false;
 }
+const nearTable = () => nearBlockOf(B.BENCH);
+const nearFurnace = () => nearBlockOf(B.FURN);
 const isCrafted = r =>
   r.kind === 'block' ? hb().includes(r.block()) :
   r.kind === 'tool' ? ownedTools[r.id] :
@@ -1336,10 +1340,12 @@ function craftRecipe(rid) {
   const r = RECIPES.find(x => x.id === rid);
   if (!r || isCrafted(r) || !canAfford(r.cost)) return false;
   if (r.table && !nearTable()) return false;
+  if (r.furnace && !nearFurnace()) return false;
   for (const m in r.cost) inventory[m] -= r.cost[m];
   if (r.kind === 'block') unlockBlock(r.block());
   else if (r.kind === 'tool') { ownedTools[r.id] = true; toast(`${r.icon} <b>${r.name}</b>を作った！`); }
   else if (r.kind === 'armor') { ownedArmor[r.id] = true; toast(`${r.icon} <b>${r.name}</b>を装着した！（被ダメージ-${armorCount() * 15}%）`); renderWeaponChip(); }
+  else if (r.kind === 'food') { inventory.meat++; toast(`${r.icon} <b>${r.name}</b>を調理した！`); }
   else { owned[r.id] = true; toast(`⚒️ <b>${r.name}</b>を合成した！`); equipWeapon(r.id); }
   blip(520, 0.1, 'sine', 0.06, 1.4);
   setTimeout(() => blip(780, 0.12, 'sine', 0.06, 1.2), 90);
@@ -1371,6 +1377,7 @@ function renderCraft() {
   document.getElementById('matsRow').innerHTML = Object.keys(MAT_NAMES).map(m =>
     `<span class="matchip">${MAT_NAMES[m]} <b>×${inventory[m]}</b></span>`).join('');
   const table = nearTable();
+  const furn = nearFurnace();
   const costHtml = cost => Object.keys(cost).map(m => {
     const ok = inventory[m] >= cost[m];
     return `<span class="${ok ? 'have' : 'lack'}">${MAT_NAMES[m]} ${inventory[m]}/${cost[m]}</span>`;
@@ -1388,8 +1395,10 @@ function renderCraft() {
       sub = r.desc || '合成済み';
     } else {
       const needTable = r.table && !table;
-      btn = `<button class="btn" data-craft="${r.id}" ${(!needTable && canAfford(r.cost)) ? '' : 'disabled'}>合成</button>`;
-      sub = (needTable ? '<span class="lack">要・作業台の近く</span>　' : '') + costHtml(r.cost);
+      const needFurn = r.furnace && !furn;
+      btn = `<button class="btn" data-craft="${r.id}" ${(!needTable && !needFurn && canAfford(r.cost)) ? '' : 'disabled'}>${r.kind === 'food' ? '調理' : '合成'}</button>`;
+      sub = (needTable ? '<span class="lack">要・作業台の近く</span>　' : '') +
+            (needFurn ? '<span class="lack">要・かまどの近く</span>　' : '') + costHtml(r.cost);
     }
     const atk = w ? `<span class="atk">ATK ${w.atk}</span>` : '';
     return `<div class="recipe"><div class="winfo">
@@ -1406,10 +1415,26 @@ function renderCraft() {
     section('武器', RECIPES.filter(r => r.kind === 'weapon')) +
     section('道具', RECIPES.filter(r => r.kind === 'tool')) +
     section('防具', RECIPES.filter(r => r.kind === 'armor')) +
+    section('食料', RECIPES.filter(r => r.kind === 'food')) +
+    `<div class="recipe"><div class="winfo"><div class="wname">🍖 焼き肉 ×${inventory.meat}</div>
+     <div class="wreq">食べるとHP+6（プレイ中はQキーでも食べられる）</div></div>
+     <button class="btn" data-eat ${inventory.meat > 0 && player.hp < player.maxHp ? '' : 'disabled'}>食べる</button></div>` +
     section('ブロック・設備', RECIPES.filter(r => r.kind === 'block')) +
     (table ? '' : `<div class="tablehint">🛠️ 作業台を作って近くに置くと、すべてのレシピが解放されます</div>`);
   document.querySelectorAll('[data-craft]').forEach(b => b.addEventListener('click', () => craftRecipe(b.dataset.craft)));
   document.querySelectorAll('[data-eq]').forEach(b => b.addEventListener('click', () => equipWeapon(b.dataset.eq)));
+  document.querySelectorAll('[data-eat]').forEach(b => b.addEventListener('click', eatFood));
+}
+function eatFood() {
+  if (inventory.meat <= 0) { toast('🍖 焼き肉がない…'); return; }
+  if (player.hp >= player.maxHp) { toast('HPは満タンだ'); return; }
+  inventory.meat--;
+  player.hp = Math.min(player.maxHp, player.hp + 6);
+  renderHearts();
+  blip(420, 0.08, 'sine', 0.05, 0.9);
+  setTimeout(() => blip(300, 0.1, 'sine', 0.05, 0.8), 110);
+  toast('🍖 焼き肉を食べた（HP+6）');
+  if (craftOpen) renderCraft();
 }
 function openCraft() {
   craftOpen = true;
@@ -1581,6 +1606,11 @@ const MOB_TYPES = {
     color: new THREE.Color(0x8a8f94),
     drops: () => [['core', 4], ['glow', 6], ['stone', 8]],
   },
+  pig: {
+    name: 'ブタ', hp: 4, dmg: 0, speed: 1.3, radius: 0.7, aggroR: 0,
+    color: new THREE.Color(0xf09fb0),
+    drops: () => [['rawmeat', 1 + (Math.random() < 0.5 ? 1 : 0)]],
+  },
   // ---- マグマエリアの敵 ----
   magma: {
     name: 'マグマスライム', hp: 5, dmg: 2, speed: 4.0, radius: 0.7, aggroR: 12, cave: true,
@@ -1634,6 +1664,20 @@ function buildMobMesh(type) {
     e1.position.set(-0.18, 0.52, 0.46);
     const e2 = e1.clone(); e2.position.x = 0.18;
     g.add(e1, e2);
+  } else if (type === 'pig') {
+    const pink = lam(0xf09fb0), dark = lam(0xe2849a);
+    g.add(box(0.7, 0.55, 1.0, pink, 0, 0.6, 0));        // 胴
+    g.add(box(0.5, 0.45, 0.4, pink, 0, 0.72, 0.62));    // 頭
+    g.add(box(0.2, 0.16, 0.06, dark, 0, 0.62, 0.84));   // 鼻
+    const legF = box(0.55, 0.35, 0.18, dark, 0, 0.18, 0.32);
+    const legB = box(0.55, 0.35, 0.18, dark, 0, 0.18, -0.32);
+    g.add(legF, legB);
+    const eye = bas(0x14101a);
+    const e1 = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.04), eye);
+    e1.position.set(-0.14, 0.82, 0.83);
+    const e2 = e1.clone(); e2.position.x = 0.14;
+    g.add(e1, e2);
+    g.userData.limbs = { legF, legB };
   } else if (type === 'bat') {
     g.add(box(0.34, 0.3, 0.32, lam(0x241a1d), 0, 0.8, 0));
     const e1 = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.07, 0.05), bas(0xffb23d));
@@ -1739,7 +1783,7 @@ function buildMobMesh(type) {
   // HPバー（スプライトは常にカメラを向く）
   const barBg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x0a0e1f, depthTest: false }));
   barBg.scale.set(0.95, 0.1, 1);
-  barBg.position.y = { slime: 1.25, magma: 1.25, bat: 1.5, cinder: 2.0, dragon: 2.4, boss: 4.3 }[type] || 2.3;
+  barBg.position.y = { slime: 1.25, magma: 1.25, bat: 1.5, cinder: 2.0, dragon: 2.4, boss: 4.3, pig: 1.35 }[type] || 2.3;
   barBg.renderOrder = 10;
   const barFg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xf43f5e, depthTest: false }));
   barFg.scale.set(0.9, 0.06, 1);
@@ -1829,7 +1873,8 @@ function trySpawnMob() {
     if (y <= SEA + 1) continue; // 水中は避ける
     const below = getBlock(Math.floor(x), y - 1, Math.floor(z));
     if (!isSolid(below)) continue;
-    spawnMobAt(Math.random() < 0.55 ? 'slime' : 'shadow', x, z);
+    const roll = Math.random();
+    spawnMobAt(roll < 0.3 ? 'pig' : roll < 0.65 ? 'slime' : 'shadow', x, z);
     return;
   }
 }
@@ -1850,6 +1895,7 @@ function hurtMob(mob, dmg, fromDir) {
     mob.vel.z += fromDir.z * 6;
     if (mob.type === 'slime') mob.vel.y = 3.5;
   }
+  if (mob.type === 'pig') mob.fleeT = 2.5; // ブタは叩かれると逃げる
   if (mob.hp <= 0) killMob(mob);
 }
 function killMob(mob) {
@@ -1940,6 +1986,37 @@ function updateMobs(dt) {
       mob.vel.multiplyScalar(Math.max(0, 1 - 4 * dt)); // ノックバック減衰
       const gy = groundAt(mob.pos.x, mob.pos.z, mob.pos.y) + 0.4 + Math.sin(mob.bobT * 2.2) * 0.22;
       mob.pos.y += (gy - mob.pos.y) * Math.min(1, 4 * dt);
+    } else if (mob.type === 'pig') {
+      // ブタ：のんびり歩き回り、叩かれると逃げる
+      mob.fleeT = Math.max(0, (mob.fleeT || 0) - dt);
+      mob.wanderT -= dt;
+      if (mob.wanderT <= 0) {
+        const a = Math.random() * Math.PI * 2;
+        mob.wanderDir.set(Math.cos(a), 0, Math.sin(a));
+        mob.wanderT = 2.5 + Math.random() * 3;
+        mob.walking = Math.random() < 0.7;
+      }
+      let dir = null, spd = 0;
+      if (mob.fleeT > 0) {
+        dir = mob.pos.clone().sub(playerCenter).setY(0).normalize();
+        spd = 4.4;
+      } else if (mob.walking) { dir = mob.wanderDir; spd = t.speed; }
+      if (dir) {
+        mob.pos.x += dir.x * spd * dt;
+        mob.pos.z += dir.z * spd * dt;
+        mob.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+        const L = mob.mesh.userData.limbs;
+        if (L) {
+          const sw = Math.sin(mob.bobT * (mob.fleeT > 0 ? 14 : 6)) * 0.5;
+          L.legF.rotation.x = sw;
+          L.legB.rotation.x = -sw;
+        }
+      }
+      mob.pos.x += mob.vel.x * dt;
+      mob.pos.z += mob.vel.z * dt;
+      mob.vel.multiplyScalar(Math.max(0, 1 - 5 * dt));
+      const gy = groundAt(mob.pos.x, mob.pos.z, mob.pos.y + 1);
+      mob.pos.y += (gy - mob.pos.y) * Math.min(1, 10 * dt);
     } else if (mob.type === 'bat') {
       // ファイアバット：飛び回り、急襲しては離脱する
       mob.fleeT = Math.max(0, (mob.fleeT || 0) - dt);
@@ -2128,7 +2205,7 @@ function raycastMobs(reach) {
   let best = null;
   for (const mob of mobs) {
     const center = mob.pos.clone();
-    const cy = { slime: 0.45, magma: 0.45, bat: 0.8, cinder: 1.0, dragon: 0.3, boss: 1.9 }[mob.type];
+    const cy = { slime: 0.45, magma: 0.45, bat: 0.8, cinder: 1.0, dragon: 0.3, boss: 1.9, pig: 0.6 }[mob.type];
     center.y += cy !== undefined ? cy : 1.1;
     const rel = center.sub(camera.position);
     const t = rel.dot(_rayDir);
@@ -2210,6 +2287,7 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
   }
   if (e.code === 'KeyF' && playing) { player.fly = !player.fly; player.vel.y = 0; blip(player.fly ? 700 : 400, 0.1, 'sine', 0.05, 1.2); }
+  if (e.code === 'KeyQ' && playing && !dead) eatFood();
   if (/^Digit[1-9]$/.test(e.code)) { selected = +e.code.slice(5) - 1; renderHotbar(); }
 });
 document.addEventListener('keyup', e => keys[e.code] = false);
@@ -2561,7 +2639,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) saveG
 /* ================= デバッグ ================= */
 window.NC = {
   camera, player, scene, renderer, getBlock, setBlock, heightAt, chunks, mobs,
-  spawnMobAt, inventory, owned, craftRecipe, craftWeapon: craftRecipe, equipWeapon, damagePlayer, RECIPES, nearTable,
+  spawnMobAt, inventory, owned, craftRecipe, craftWeapon: craftRecipe, equipWeapon, damagePlayer, RECIPES, nearTable, nearFurnace, eatFood,
   openCraft, closeCraft, hurtMob, raycastMobs, spawnBoss, spawnDragon, trySpawnCaveMob,
   boss: () => boss, dragon: () => dragon, chunkTick, updateMobs, updateDay,
   startGame, isPlaying: () => playing, isTouch: IS_TOUCH,
