@@ -2575,7 +2575,8 @@ function updateStats() {
   const p = player.pos;
   const phase = dayT < 0.5 ? '☀' : '🌙';
   document.getElementById('stats').innerHTML =
-    `<b>${fps}</b> FPS &nbsp;|&nbsp; ${phase} &nbsp;|&nbsp; 💀 <b>${kills}</b><br>` +
+    `<b>${fps}</b> FPS &nbsp;|&nbsp; ${phase} &nbsp;|&nbsp; 💀 <b>${kills}</b>` +
+    (syncAdapter.connected ? ` &nbsp;|&nbsp; 🌐 <b>${remotePlayers.size + 1}</b>人` : '') + `<br>` +
     `X <b>${p.x.toFixed(1)}</b> Y <b>${p.y.toFixed(1)}</b> Z <b>${p.z.toFixed(1)}</b><br>` +
     `敵 <b>${mobs.length}</b>${player.fly ? ' &nbsp;✈ 飛行中' : ''}`;
 }
@@ -2661,6 +2662,87 @@ function updateDay(dt) {
   starMat.opacity = Math.max(0, Math.min(1, (-s + 0.12) * 2.4)) * 0.95;
   stars.position.copy(player.pos);
 }
+
+/* ================= Firebase同期（フェーズ3：マルチプレイ） =================
+   READMEの手順でFirebaseプロジェクトを作り、FIREBASE_CONFIG に設定を貼ると
+   同じシードのワールドに友達と入れる。null のままなら完全オフライン動作。 */
+const FIREBASE_CONFIG = null; /* 例:
+const FIREBASE_CONFIG = {
+  apiKey: "AIza...",
+  authDomain: "your-app.firebaseapp.com",
+  databaseURL: "https://your-app-default-rtdb.firebaseio.com",
+  projectId: "your-app",
+}; */
+async function initFirebase() {
+  if (!FIREBASE_CONFIG) return;
+  try {
+    const V = '10.12.2';
+    const [{ initializeApp }, dbm, { getAuth, signInAnonymously }] = await Promise.all([
+      import(`https://www.gstatic.com/firebasejs/${V}/firebase-app.js`),
+      import(`https://www.gstatic.com/firebasejs/${V}/firebase-database.js`),
+      import(`https://www.gstatic.com/firebasejs/${V}/firebase-auth.js`),
+    ]);
+    const { getDatabase, ref, set, onChildAdded, onChildChanged, onValue, onDisconnect } = dbm;
+    const app = initializeApp(FIREBASE_CONFIG);
+    const db = getDatabase(app);
+    const cred = await signInAnonymously(getAuth(app));
+    const uid = cred.user.uid;
+    const worldId = `world_${WORLD_SEED}`;
+    let name = localStorage.getItem('neocraft_name');
+    if (!name) {
+      name = (prompt('マルチプレイの表示名を入力してね', 'プレイヤー') || 'プレイヤー').slice(0, 12);
+      localStorage.setItem('neocraft_name', name);
+    }
+    const myRef = ref(db, `worlds/${worldId}/online/${uid}`);
+    onDisconnect(myRef).remove(); // 切断したら自動退室
+    set(ref(db, `worlds/${worldId}/seed`), WORLD_SEED);
+    // --- 送信側を本物に差し替え ---
+    syncAdapter.sendAction = action => {
+      const v = action.type === 'break' ? 0 : action.block;
+      set(ref(db, `worlds/${worldId}/changes/${action.x}_${action.y}_${action.z}`), v);
+    };
+    syncAdapter.sendPresence = p => set(myRef, {
+      name, x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2),
+    });
+    // --- 受信：ブロック差分 ---
+    const applyChange = snap => {
+      const [x, y, z] = snap.key.split('_').map(Number);
+      const v = snap.val();
+      if (getBlock(x, y, z) === v) return; // 既反映（自分のエコー含む）
+      if (!worldReady) { // 参加直後はデータだけ反映（メッシュは後でまとめて生成される）
+        worldChanges[snap.key] = v;
+        const cx = Math.floor(x / CH), cz = Math.floor(z / CH);
+        const c = chunks.get(key(cx, cz));
+        if (c) c.data[(y * CH + (z - cz * CH)) * CH + (x - cx * CH)] = v;
+        return;
+      }
+      applyAction(v === 0
+        ? { type: 'break', x, y, z, playerId: 'remote' }
+        : { type: 'place', x, y, z, block: v, playerId: 'remote' }, true);
+    };
+    const changesRef = ref(db, `worlds/${worldId}/changes`);
+    onChildAdded(changesRef, applyChange);
+    onChildChanged(changesRef, applyChange);
+    // --- 受信：オンラインの仲間 ---
+    onValue(ref(db, `worlds/${worldId}/online`), snap => {
+      const seen = new Set();
+      snap.forEach(ch => {
+        if (ch.key === uid) return;
+        seen.add(ch.key);
+        const v = ch.val();
+        upsertRemotePlayer({ id: ch.key, name: v.name, x: v.x, y: v.y, z: v.z, yaw: v.yaw });
+      });
+      for (const id of [...remotePlayers.keys()])
+        if (id.indexOf('dummy-') !== 0 && !seen.has(id)) removeRemotePlayer(id);
+    });
+    syncAdapter.connected = true;
+    toast(`🌐 <b>${name}</b> としてワールド ${worldId} に参加した！`);
+  } catch (e) {
+    console.warn('Firebase接続失敗:', e);
+    toast('🌐 オンライン接続に失敗（オフラインで続行）');
+  }
+}
+initFirebase();
 
 /* ================= セーブ/ロード =================
    「シード＋差分(changes)」方式。フェーズ3のFirebase構造

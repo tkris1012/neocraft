@@ -57,6 +57,53 @@ python -m http.server 8765
 - **セーブ/ロード** — 「シード＋差分」方式の自動セーブ（10秒ごと＋タブ離脱時）。`?seed=xxx` で別ワールド生成
 - **マルチプレイ布石** — 全ワールド変更がアクション（applyAction）経由、同期アダプタの差し込み口、リモートプレイヤー描画土台まで実装済み（Firebase接続は今後）
 
+## マルチプレイのセットアップ（Firebase）
+
+ゲーム本体はGitHub Pagesのまま、同期だけFirebase Realtime Database（無料Sparkプラン）に任せる構成。
+専用サーバーは不要です。
+
+1. [Firebaseコンソール](https://console.firebase.google.com/)でプロジェクトを作成
+2. **構築 → Realtime Database → データベースを作成**（ロケーションは asia-southeast1 など）
+3. 「ルール」タブに下記のセキュリティルールを貼り付けて公開
+4. **構築 → Authentication → ログイン方法 → 匿名** を有効化
+5. **プロジェクト設定（⚙）→ マイアプリ → ウェブアプリを追加**（ニックネーム任意、Hostingは不要）
+6. 表示された `firebaseConfig` を `index.html` 内の `FIREBASE_CONFIG = null` の部分に貼り付け
+   （`databaseURL` が含まれていることを確認。なければRealtime DatabaseのURLを追記）
+7. デプロイすれば、**同じURL・同じシードを開いた人同士が同じワールドに入れる**
+   （初回にプレイヤー名を聞かれます。切断すると自動で退室扱いになります）
+
+セキュリティルール：
+
+```json
+{
+  "rules": {
+    "players": {
+      "$uid": { ".read": true, ".write": "auth.uid === $uid" }
+    },
+    "worlds": {
+      "$world": {
+        "seed":    { ".read": true, ".write": "auth != null" },
+        "changes": { ".read": true, ".write": "auth != null" },
+        "online":  {
+          ".read": true,
+          "$uid": { ".write": "auth.uid === $uid" }
+        }
+      }
+    }
+  }
+}
+```
+
+データ構造（シード＋差分方式。マップ全体は保存しない）：
+
+```
+worlds/
+└── world_{seed}/
+    ├── seed                ← マップ再生成用
+    ├── changes/            ← 弄ったブロックの差分だけ "x_y_z": blockId（0=壊した）
+    └── online/{uid}        ← 今いる人 { name, x, y, z, yaw }（切断で自動削除）
+```
+
 ## 技術
 
 - [Three.js](https://threejs.org/) r160（CDN読み込み、ビルド不要）
