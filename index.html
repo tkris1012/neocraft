@@ -563,8 +563,19 @@ for (const id in DEFS) {
 }
 
 /* ================= ノイズ ================= */
+// ワールドシード：?seed=xxx で指定（数値でも文字列でもOK）。未指定はデフォルト固定。
+// マルチプレイでは全員が同じシードを使うことで同一マップを再現する。
+const WORLD_SEED = (() => {
+  const s = new URLSearchParams(location.search).get('seed');
+  if (s === null || s === '') return 1337;
+  if (/^-?\d+$/.test(s)) return parseInt(s) | 0;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+  return h;
+})();
+const SEED_MIX = Math.imul(WORLD_SEED, 974593) | 0;
 function hash2(x, z) {
-  let n = Math.imul(x, 374761393) + Math.imul(z, 668265263);
+  let n = Math.imul(x, 374761393) + Math.imul(z, 668265263) + SEED_MIX;
   n = Math.imul(n ^ (n >>> 13), 1274126177);
   return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
 }
@@ -582,7 +593,7 @@ function fbm(x, z, oct) {
 }
 // 3Dノイズ（洞窟生成用）
 function hash3(x, y, z) {
-  let n = Math.imul(x, 374761393) + Math.imul(y, 982451653) + Math.imul(z, 668265263);
+  let n = Math.imul(x, 374761393) + Math.imul(y, 982451653) + Math.imul(z, 668265263) + SEED_MIX;
   n = Math.imul(n ^ (n >>> 13), 1274126177);
   return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
 }
@@ -667,8 +678,23 @@ function genData(cx, cz) {
 function ensureData(cx, cz) {
   const k = key(cx, cz);
   let c = chunks.get(k);
-  if (!c) { c = { data: genData(cx, cz), meshes: [], meshed: false }; chunks.set(k, c); }
+  if (!c) {
+    c = { data: genData(cx, cz), meshes: [], meshed: false };
+    chunks.set(k, c);
+    applyChangesToChunk(cx, cz, c); // プレイヤーが弄った差分を上から被せる
+  }
   return c;
+}
+// ワールド差分（シード＋changes方式）。キー "x_y_z" → ブロックID
+// 将来のセーブ/Firebase同期はこのオブジェクトをそのまま書き出す
+const worldChanges = {};
+function applyChangesToChunk(cx, cz, c) {
+  for (const k in worldChanges) {
+    const [x, y, z] = k.split('_').map(Number);
+    const lx = x - cx * CH, lz = z - cz * CH;
+    if (lx < 0 || lx >= CH || lz < 0 || lz >= CH || y < 0 || y >= H) continue;
+    c.data[(y * CH + lz) * CH + lx] = worldChanges[k];
+  }
 }
 function getBlock(x, y, z) {
   if (y < 0) return B.STONE;
@@ -689,6 +715,36 @@ function setBlock(x, y, z, id) {
   if (lz === 0) meshChunk(cx, cz - 1);
   if (lz === CH - 1) meshChunk(cx, cz + 1);
 }
+
+/* ================= アクション層（マルチプレイ布石） =================
+   ワールドの状態変更は必ず applyAction() を通す。
+   将来はこのアクションを Firebase RTDB にそのまま書き込み/購読するだけで同期が成立する。 */
+const LOCAL_PLAYER_ID = 'local';
+function applyAction(action, fromRemote = false) {
+  if (action.type === 'place') {
+    if (action.y < 1 || action.y >= H) return;
+    setBlock(action.x, action.y, action.z, action.block);
+    worldChanges[`${action.x}_${action.y}_${action.z}`] = action.block;
+  } else if (action.type === 'break') {
+    if (action.y < 1 || action.y >= H) return;
+    setBlock(action.x, action.y, action.z, B.AIR);
+    worldChanges[`${action.x}_${action.y}_${action.z}`] = B.AIR;
+  }
+  if (!fromRemote) syncAdapter.sendAction(action);
+}
+// 同期アダプタ（差し込み口のみ。Firebase接続は未実装のダミー）
+const syncAdapter = {
+  _actionCb: null,
+  _presenceCb: null,
+  sendAction(action) { /* TODO: worlds/{id}/changes へ書き込み */ },
+  sendPresence(p) { /* TODO: worlds/{id}/online/{uid} へ書き込み（毎秒4回に間引き済み） */ },
+  onRemoteAction(cb) { this._actionCb = cb; },
+  onRemotePresence(cb) { this._presenceCb = cb; },
+  // テスト用：リモートからの受信をシミュレート
+  simulateRemoteAction(a) { if (this._actionCb) this._actionCb(a); },
+  simulateRemotePresence(p) { if (this._presenceCb) this._presenceCb(p); },
+};
+syncAdapter.onRemoteAction(a => applyAction(a, true));
 function groundAt(x, z, fromY = H - 2) {
   const fx = Math.floor(x), fz = Math.floor(z);
   for (let y = Math.min(Math.floor(fromY) + 2, H - 1); y >= 0; y--)
@@ -1204,6 +1260,92 @@ function updateViewModel(dt) {
   viewModel.rotation.set(0.15 - k * 1.5, -0.35 + k * 0.45, 0.1 - k * 0.3);
 }
 function swing() { swingT = 0.28; }
+
+/* ================= リモートプレイヤー（マルチプレイ布石） =================
+   ローカル/リモートを同じ presence 型 {id, name, x, y, z, yaw} で扱う。
+   今はダミー（NC.spawnDummyPlayer）で動作確認できる土台のみ。 */
+const remotePlayers = new Map(); // id -> { id, name, pos, target, yaw, targetYaw, mesh, limbs }
+function buildPlayerMesh(name) {
+  const g = new THREE.Group();
+  const lam = c => new THREE.MeshLambertMaterial({ color: c });
+  const box = (w, h, d, m, x, y, z) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    mesh.position.set(x, y, z);
+    return mesh;
+  };
+  const legL = box(0.22, 0.7, 0.24, lam(0x2b3a55), -0.13, 0.35, 0);
+  const legR = box(0.22, 0.7, 0.24, lam(0x2b3a55), 0.13, 0.35, 0);
+  g.add(legL, legR);
+  g.add(box(0.5, 0.62, 0.28, lam(0x22d3ee), 0, 1.0, 0));        // 胴（シアン）
+  const armL = box(0.16, 0.6, 0.2, lam(0x1aa8c2), -0.34, 1.0, 0);
+  const armR = box(0.16, 0.6, 0.2, lam(0x1aa8c2), 0.34, 1.0, 0);
+  g.add(armL, armR);
+  g.add(box(0.42, 0.42, 0.42, lam(0xd9a066), 0, 1.55, 0));      // 頭
+  const eye = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+  const e1 = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.04), eye);
+  e1.position.set(-0.1, 1.6, 0.22);
+  const e2 = e1.clone(); e2.position.x = 0.1;
+  g.add(e1, e2);
+  // 名前タグ
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = 'rgba(10,14,31,0.6)';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.font = 'bold 34px sans-serif';
+  ctx.fillStyle = '#e7ecf5';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(name, 128, 34);
+  const tagTex = new THREE.CanvasTexture(cv);
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tagTex, depthTest: false }));
+  tag.scale.set(1.4, 0.35, 1);
+  tag.position.y = 2.1;
+  tag.renderOrder = 12;
+  g.add(tag);
+  g.userData.limbs = { legL, legR, armL, armR };
+  return g;
+}
+function upsertRemotePlayer(p) {
+  let rp = remotePlayers.get(p.id);
+  if (!rp) {
+    const mesh = buildPlayerMesh(p.name || 'Player');
+    scene.add(mesh);
+    rp = { id: p.id, name: p.name, pos: new THREE.Vector3(p.x, p.y, p.z), target: new THREE.Vector3(p.x, p.y, p.z), yaw: p.yaw || 0, targetYaw: p.yaw || 0, mesh, walkT: 0 };
+    remotePlayers.set(p.id, rp);
+  }
+  rp.target.set(p.x, p.y, p.z);
+  rp.targetYaw = p.yaw || 0;
+  return rp;
+}
+function removeRemotePlayer(id) {
+  const rp = remotePlayers.get(id);
+  if (rp) { scene.remove(rp.mesh); remotePlayers.delete(id); }
+}
+function updateRemotePlayers(dt) {
+  for (const rp of remotePlayers.values()) {
+    const before = rp.pos.clone();
+    rp.pos.lerp(rp.target, Math.min(1, 12 * dt)); // 受信間隔の粗さを補間で吸収
+    rp.yaw += (rp.targetYaw - rp.yaw) * Math.min(1, 10 * dt);
+    const speed = before.distanceTo(rp.pos) / Math.max(dt, 1e-4);
+    rp.walkT += dt * (1 + speed * 1.6);
+    rp.mesh.position.copy(rp.pos);
+    rp.mesh.rotation.y = rp.yaw;
+    const L = rp.mesh.userData.limbs;
+    const sw = Math.sin(rp.walkT * 6) * Math.min(0.6, speed * 0.2);
+    L.legL.rotation.x = sw; L.legR.rotation.x = -sw;
+    L.armL.rotation.x = -sw; L.armR.rotation.x = sw;
+  }
+}
+syncAdapter.onRemotePresence(p => upsertRemotePlayer(p));
+// 位置送信の間引き（無料枠対策：毎秒4回）
+let presenceTimer = 0;
+function presenceTick(dt) {
+  presenceTimer -= dt;
+  if (presenceTimer > 0) return;
+  presenceTimer = 0.25;
+  syncAdapter.sendPresence({ id: LOCAL_PLAYER_ID, x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw });
+}
 
 /* ================= ザコ敵 ================= */
 const mobs = [];
@@ -1875,7 +2017,7 @@ function doAttack() {
   }
   if (blockHit && blockHit.y >= 1) {
     burst(blockHit.x, blockHit.y, blockHit.z, DEFS[blockHit.id].c);
-    setBlock(blockHit.x, blockHit.y, blockHit.z, B.AIR);
+    applyAction({ type: 'break', x: blockHit.x, y: blockHit.y, z: blockHit.z, playerId: LOCAL_PLAYER_ID });
     blip(170, 0.09, 'square', 0.05, 0.5);
     const m = BLOCK_MAT[blockHit.id];
     if (m) gainMat(m, 1);
@@ -1893,7 +2035,7 @@ function doPlace() {
     py + 1 > p.y && py < p.y + player.HGT;
   const cur = getBlock(px, py, pz);
   if (!overlap && (cur === B.AIR || cur === B.WATER)) {
-    setBlock(px, py, pz, id);
+    applyAction({ type: 'place', x: px, y: py, z: pz, block: id, playerId: LOCAL_PLAYER_ID });
     blip(330, 0.07, 'square', 0.045, 1.15);
     swing();
   }
@@ -2024,6 +2166,7 @@ function renderHearts() {
 }
 renderHearts();
 renderWeaponChip();
+document.querySelector('#card .sub').textContent = `Modern Voxel Sandbox — SEED ${WORLD_SEED}`;
 
 let fps = 0, frames = 0, fpsT = 0;
 function updateStats() {
@@ -2125,6 +2268,19 @@ window.NC = {
   boss: () => boss, dragon: () => dragon, chunkTick, updateMobs, updateDay,
   startGame, isPlaying: () => playing, isTouch: IS_TOUCH,
   setPlaying: v => { playing = v; },
+  applyAction, syncAdapter, worldChanges, remotePlayers, WORLD_SEED,
+  // ダミーのリモートプレイヤーを1体スポーンして円を描いて歩かせる（同期土台の動作確認用）
+  spawnDummyPlayer: () => {
+    const id = 'dummy-' + Math.floor(Math.random() * 1000);
+    const cx = player.pos.x, cz = player.pos.z;
+    let a = 0;
+    const timer = setInterval(() => {
+      a += 0.08;
+      const x = cx + Math.cos(a) * 4, z = cz + Math.sin(a) * 4;
+      syncAdapter.simulateRemotePresence({ id, name: 'フレンド', x, y: groundAt(x, z), z, yaw: a + Math.PI / 2 });
+    }, 250); // 本番と同じ毎秒4回の受信を想定
+    return { id, stop: () => { clearInterval(timer); removeRemotePlayer(id); } };
+  },
   setTime: t => { dayT = t; },
   state: () => ({ equipped, hp: player.hp, kills, mobCount: mobs.length, inv: { ...inventory } }),
 };
@@ -2140,6 +2296,8 @@ function loop(now) {
   chunkTick();
   if (playing && !dead) physics(dt);
   if (worldReady) updateMobs(dt);
+  updateRemotePlayers(dt);
+  if (playing) presenceTick(dt);
   updateDay(dt);
   updateParticles(dt);
   updateViewModel(dt);
