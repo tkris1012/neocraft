@@ -893,6 +893,9 @@ function applyAction(action, fromRemote = false) {
     setBlock(action.x, action.y, action.z, B.AIR);
     worldChanges[`${action.x}_${action.y}_${action.z}`] = B.AIR;
   }
+  // 他プレイヤーの破壊は手元に見えないので破壊パーティクルを出す
+  if (fromRemote && action.type === 'break' && isSolid(prev) && DEFS[prev])
+    burst(action.x, action.y, action.z, DEFS[prev].c);
   // 松明の設置/撤去は明かりが隣接チャンクに及ぶため周辺を再メッシュ
   if (action.block === B.TORCH || prev === B.TORCH) {
     const cx = Math.floor(action.x / CH), cz = Math.floor(action.z / CH);
@@ -1641,7 +1644,10 @@ function updateViewModel(dt) {
   viewModel.position.set(0.5 - k * 0.18, -0.5 + bob - k * 0.06, -0.85 - k * 0.25);
   viewModel.rotation.set(0.15 - k * 1.5, -0.35 + k * 0.45, 0.1 - k * 0.3);
 }
-function swing() { swingT = 0.28; }
+// 攻撃エフェクトの同期用（presenceに相乗りさせて他プレイヤーへ送る／追加の書き込み無し）
+let lastSwingT = 0;          // 最後にスイングした時刻
+let lastFx = null;           // 最後の特殊エフェクト { t, kind:'excel'|'dbs', dx,dy,dz }
+function swing() { swingT = 0.28; lastSwingT = Date.now(); }
 
 /* ================= リモートプレイヤー（マルチプレイ布石） =================
    ローカル/リモートを同じ presence 型 {id, name, x, y, z, yaw} で扱う。
@@ -1738,13 +1744,54 @@ function upsertRemotePlayer(p) {
   if (!rp) {
     const mesh = buildPlayerMesh(p.name || 'Player');
     scene.add(mesh);
-    rp = { id: p.id, name: p.name, pos: new THREE.Vector3(p.x, p.y, p.z), target: new THREE.Vector3(p.x, p.y, p.z), yaw: p.yaw || 0, targetYaw: p.yaw || 0, mesh, walkT: 0, eq: 'fist', ar: 0 };
+    rp = { id: p.id, name: p.name, pos: new THREE.Vector3(p.x, p.y, p.z), target: new THREE.Vector3(p.x, p.y, p.z), yaw: p.yaw || 0, targetYaw: p.yaw || 0, mesh, walkT: 0, eq: 'fist', ar: 0, swingT: 0, lastSw: p.sw || 0, lastFxt: p.fxt || 0 };
     remotePlayers.set(p.id, rp);
   }
   rp.target.set(p.x, p.y, p.z);
   rp.targetYaw = p.yaw || 0;
   applyPlayerGear(rp, p.eq || 'fist', p.ar || 0);
+  // 攻撃モーション：新しいスイングを検知したら腕を振る
+  if (p.sw && p.sw > rp.lastSw) { rp.lastSw = p.sw; rp.swingT = 0.3; }
+  // 特殊エフェクト：新しいfxを検知したら発生（参加直後の古いイベントは無視）
+  if (p.fxt && p.fxt > rp.lastFxt) {
+    rp.lastFxt = p.fxt;
+    spawnRemoteFx(rp, p);
+  }
   return rp;
+}
+// 他プレイヤーのエフェクトを自分の画面に再現（見た目のみ・ダメージなし）
+const remoteShots = [];
+function spawnRemoteFx(rp, p) {
+  const ox = rp.pos.x, oy = rp.pos.y + 1.4, oz = rp.pos.z;
+  if (p.fk === 'excel' && p.fdx !== undefined) {
+    const dir = new THREE.Vector3(p.fdx, p.fdy, p.fdz);
+    if (dir.lengthSq() < 0.01) return;
+    dir.normalize();
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: excelTex, transparent: true }));
+    sp.scale.setScalar(0.55);
+    sp.position.set(ox + dir.x * 0.6, oy + dir.y * 0.6, oz + dir.z * 0.6);
+    scene.add(sp);
+    remoteShots.push({ sp, vel: dir.multiplyScalar(18), life: 2.2 });
+    blip(720, 0.07, 'square', 0.04, 1.7);
+  } else if (p.fk === 'dbs') {
+    const f = new THREE.Vector3(-Math.sin(rp.yaw), 0, -Math.cos(rp.yaw));
+    iconBurst(ox + f.x * 1.2, oy - 0.3, oz + f.z * 1.2, 10);
+    blip(1200, 0.09, 'triangle', 0.04, 1.5);
+  }
+}
+function updateRemoteShots(dt) {
+  for (let i = remoteShots.length - 1; i >= 0; i--) {
+    const s = remoteShots[i];
+    s.life -= dt;
+    s.sp.position.addScaledVector(s.vel, dt);
+    s.sp.material.rotation += 9 * dt;
+    const p = s.sp.position;
+    const hitBlock = isSolid(getBlock(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)));
+    if (hitBlock || s.life <= 0) {
+      if (hitBlock) { iconBurst(p.x, p.y, p.z, 16, true); blip(95, 0.3, 'sawtooth', 0.07, 0.4); }
+      scene.remove(s.sp); s.sp.material.dispose(); remoteShots.splice(i, 1);
+    }
+  }
 }
 function removeRemotePlayer(id) {
   const rp = remotePlayers.get(id);
@@ -1762,7 +1809,17 @@ function updateRemotePlayers(dt) {
     const L = rp.mesh.userData.limbs;
     const sw = Math.sin(rp.walkT * 6) * Math.min(0.6, speed * 0.2);
     L.legL.rotation.x = sw; L.legR.rotation.x = -sw;
-    L.armL.rotation.x = -sw; L.armR.rotation.x = sw;
+    L.armL.rotation.x = -sw;
+    // 攻撃モーション：振り下ろし（武器を持つ右腕＋手）
+    if (rp.swingT > 0) {
+      rp.swingT = Math.max(0, rp.swingT - dt);
+      const k = Math.sin((1 - rp.swingT / 0.3) * Math.PI); // 0→1→0
+      L.armR.rotation.x = -2.2 * k;
+      rp.mesh.userData.hand.rotation.x = -0.6 - 2.0 * k;
+    } else {
+      L.armR.rotation.x = sw;
+      rp.mesh.userData.hand.rotation.x = -0.6;
+    }
   }
 }
 syncAdapter.onRemotePresence(p => upsertRemotePlayer(p));
@@ -1772,12 +1829,19 @@ function presenceTick(dt) {
   presenceTimer -= dt;
   if (presenceTimer > 0) return;
   presenceTimer = 0.25;
-  syncAdapter.sendPresence({
+  const pr = {
     id: LOCAL_PLAYER_ID,
     x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw,
     eq: equipped,
     ar: (ownedArmor.helm ? 1 : 0) | (ownedArmor.chest ? 2 : 0) | (ownedArmor.legs ? 4 : 0),
-  });
+    sw: lastSwingT, // 最後のスイング時刻（攻撃モーション同期）
+  };
+  // 直近の特殊エフェクト（爆発・斬撃きらめき）も相乗りで送る
+  if (lastFx && Date.now() - lastFx.t < 2000) {
+    pr.fxt = lastFx.t; pr.fk = lastFx.kind;
+    if (lastFx.kind === 'excel') { pr.fdx = +lastFx.dx.toFixed(2); pr.fdy = +lastFx.dy.toFixed(2); pr.fdz = +lastFx.dz.toFixed(2); }
+  }
+  syncAdapter.sendPresence(pr);
 }
 
 /* ================= ザコ敵 ================= */
@@ -2429,6 +2493,7 @@ function fireExcelShot() {
   excelShots.push({ sp, vel: dir.clone().multiplyScalar(18), life: 2.2 });
   scene.add(sp);
   blip(720, 0.07, 'square', 0.05, 1.7); // ピコッ
+  lastFx = { t: Date.now(), kind: 'excel', dx: dir.x, dy: dir.y, dz: dir.z }; // 他プレイヤーへ同期
 }
 function explodeShot(s, hitMob) {
   const p = s.sp.position;
@@ -2589,6 +2654,7 @@ function tryMobAttack() {
       iconBurst(c.x, c.y + 1, c.z, 10);
       blip(1200, 0.09, 'triangle', 0.05, 1.5); // シャキーン
       setTimeout(() => blip(1700, 0.07, 'triangle', 0.04, 1.3), 60);
+      lastFx = { t: Date.now(), kind: 'dbs' }; // 他プレイヤーへ同期
     }
     return true;
   }
@@ -2943,11 +3009,15 @@ async function initFirebase() {
       const v = action.type === 'break' ? 0 : action.block;
       set(ref(db, `worlds/${worldId}/changes/${action.x}_${action.y}_${action.z}`), v);
     };
-    syncAdapter.sendPresence = p => set(myRef, {
-      name, x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2),
-      eq: p.eq || 'fist', ar: p.ar || 0,
-      t: Date.now(), // 最終更新時刻（幽霊エントリ判定用）
-    });
+    syncAdapter.sendPresence = p => {
+      const data = {
+        name, x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2),
+        eq: p.eq || 'fist', ar: p.ar || 0, sw: p.sw || 0,
+        t: Date.now(), // 最終更新時刻（幽霊エントリ判定用）
+      };
+      if (p.fxt) { data.fxt = p.fxt; data.fk = p.fk; if (p.fdx !== undefined) { data.fdx = p.fdx; data.fdy = p.fdy; data.fdz = p.fdz; } }
+      set(myRef, data);
+    };
     // --- 受信：ブロック差分 ---
     const applyChange = snap => {
       const [x, y, z] = snap.key.split('_').map(Number);
@@ -2977,7 +3047,8 @@ async function initFirebase() {
         // （onDisconnectが効かなかった残骸や旧バージョンの残り。他人のノードは消せないので表示だけ除外）
         if (!v || !v.t || Date.now() - v.t > 60000) return;
         seen.add(ch.key);
-        upsertRemotePlayer({ id: ch.key, name: v.name, x: v.x, y: v.y, z: v.z, yaw: v.yaw, eq: v.eq, ar: v.ar });
+        upsertRemotePlayer({ id: ch.key, name: v.name, x: v.x, y: v.y, z: v.z, yaw: v.yaw, eq: v.eq, ar: v.ar,
+          sw: v.sw, fxt: v.fxt, fk: v.fk, fdx: v.fdx, fdy: v.fdy, fdz: v.fdz });
       });
       for (const id of [...remotePlayers.keys()])
         if (id.indexOf('dummy-') !== 0 && !seen.has(id)) removeRemotePlayer(id);
@@ -3062,10 +3133,18 @@ window.NC = {
     let a = 0;
     const eqs = ['wood', 'stone', 'neon', 'excel', 'dbs'];
     const eq = eqs[(Math.random() * eqs.length) | 0];
+    let sw = 0, fxt = 0, tick = 0;
     const timer = setInterval(() => {
-      a += 0.08;
+      a += 0.08; tick++;
       const x = cx + Math.cos(a) * 4, z = cz + Math.sin(a) * 4;
-      syncAdapter.simulateRemotePresence({ id, name: 'フレンド', x, y: groundAt(x, z), z, yaw: a + Math.PI / 2, eq, ar: 7 });
+      const yaw = a + Math.PI / 2;
+      const pr = { id, name: 'フレンド', x, y: groundAt(x, z), z, yaw, eq, ar: 7, sw };
+      if (tick % 4 === 0) { // 1秒ごとに攻撃
+        sw = Date.now(); pr.sw = sw;
+        fxt = Date.now(); pr.fxt = fxt; pr.fk = (eq === 'excel') ? 'excel' : 'dbs';
+        if (eq === 'excel') { const f = new THREE.Vector3(-Math.sin(yaw), -0.1, -Math.cos(yaw)).normalize(); pr.fdx = f.x; pr.fdy = f.y; pr.fdz = f.z; }
+      }
+      syncAdapter.simulateRemotePresence(pr);
     }, 250); // 本番と同じ毎秒4回の受信を想定
     return { id, stop: () => { clearInterval(timer); removeRemotePlayer(id); } };
   },
@@ -3101,6 +3180,7 @@ function loop(now) {
   }
   updateFireballs(dt);
   updateExcelShots(dt);
+  updateRemoteShots(dt);
   updateIconParts(dt);
 
   // オートセーブ（10秒ごと）
