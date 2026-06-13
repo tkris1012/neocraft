@@ -178,6 +178,35 @@
     transition: width .25s; box-shadow: 0 0 12px rgba(244,63,94,0.5);
   }
 
+  /* ---- ボス討伐ランキング ---- */
+  #rankPanel {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 23; pointer-events: none; display: none;
+    width: min(320px, 86vw);
+    background: var(--glass); border: 1px solid rgba(167,139,250,0.4);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border-radius: 16px; padding: 16px 18px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(167,139,250,0.12);
+    color: #e7ecf5;
+  }
+  #rankPanel.show { display: block; }
+  #rankPanel h3 {
+    font-size: 15px; letter-spacing: .14em; text-align: center; margin-bottom: 3px;
+    background: linear-gradient(92deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #rankPanel .rsub { font-size: 10px; letter-spacing: .2em; color: rgba(255,255,255,0.4); text-align: center; margin-bottom: 12px; }
+  #rankList .rrow {
+    display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 9px;
+    font-size: 13px; margin-bottom: 4px; background: rgba(255,255,255,0.04);
+  }
+  #rankList .rrow.me { background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.3); }
+  #rankList .rk { width: 22px; text-align: center; font-weight: 800; color: var(--accent2); }
+  #rankList .rn { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #rankList .rrow.me .rn { color: #4ade80; font-weight: 700; }
+  #rankList .rc { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 700; }
+  #rankList .rempty { font-size: 12px; color: rgba(255,255,255,0.45); text-align: center; padding: 12px 0; }
+
   /* ---- 集合ビーコン指示器 ---- */
   #beaconHud {
     position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 10;
@@ -413,6 +442,11 @@
   <div class="bname"><span id="bossName">👑 古代ゴーレム</span><span class="bstate">PASSIVE</span></div>
   <div class="bwrap"><div class="bfill"></div></div>
 </div>
+<div id="rankPanel">
+  <h3>🏆 ボス討伐ランキング</h3>
+  <div class="rsub">オンラインの仲間 — R で開閉</div>
+  <div id="rankList"></div>
+</div>
 <div id="beaconHud"><span class="barrow">▲</span> 🚩 集合 <b><span id="beaconDist">0</span>m</b></div>
 <div id="invitePanel">
   <div class="card">
@@ -437,6 +471,7 @@
   <div id="btnCraft" class="tbtn">⚒️</div>
   <div id="btnChat" class="tbtn">💬</div>
   <div id="btnBeacon" class="tbtn">🚩</div>
+  <div id="btnRank" class="tbtn">🏆</div>
   <div id="btnPause" class="tbtn">⏸</div>
 </div>
 
@@ -456,6 +491,7 @@
       <span><b>Q</b>焼き肉を食べる</span>
       <span><b>Enter/T</b>チャット</span>
       <span><b>B</b>集合ビーコン</span>
+      <span><b>R</b>討伐ランキング</span>
       <span><b>F</b>飛行モード切替</span>
       <span><b>C</b>（飛行中）下降</span>
     </div>
@@ -465,6 +501,7 @@
     </div>
     <div id="playhint" style="display:none">クリックでスタート</div>
     <button class="btn ghost" id="inviteBtn" style="margin-top:14px;width:100%;padding:11px 0">🔗 友達を招待（QR）</button>
+    <button class="btn ghost" id="rankBtn" style="margin-top:8px;width:100%;padding:11px 0">🏆 ボス討伐ランキング</button>
   </div>
 </div>
 
@@ -1320,7 +1357,8 @@ search: for (let r = 0; r <= 14; r++) {
 const keys = {};
 let selected = 0;
 let dead = false, craftOpen = false;
-let lastDamageT = -99, regenAcc = 0, flashT = 0, kills = 0, lavaAcc = 0;
+let lastDamageT = -99, regenAcc = 0, flashT = 0, kills = 0, lavaAcc = 0, bossKills = 0;
+let rankOpen = false;
 
 // プレイヤーAABBと交差しているブロック内サブボックスを列挙（ハーフ・階段対応）
 function collideBoxes(px, py, pz) {
@@ -1850,6 +1888,7 @@ function upsertRemotePlayer(p) {
   }
   rp.target.set(p.x, p.y, p.z);
   rp.targetYaw = p.yaw || 0;
+  rp.bk = p.bk || 0;
   applyPlayerGear(rp, p.eq || 'fist', p.ar || 0);
   // 攻撃モーション：新しいスイングを検知したら腕を振る
   if (p.sw && p.sw > rp.lastSw) { rp.lastSw = p.sw; rp.swingT = 0.3; }
@@ -1942,6 +1981,7 @@ function presenceTick(dt) {
     eq: equipped,
     ar: (ownedArmor.helm ? 1 : 0) | (ownedArmor.chest ? 2 : 0) | (ownedArmor.legs ? 4 : 0),
     sw: lastSwingT, // 最後のスイング時刻（攻撃モーション同期）
+    bk: bossKills,  // ボス討伐数（ランキング用）
   };
   // 直近の特殊エフェクト（爆発・斬撃きらめき）も相乗りで送る
   if (lastFx && Date.now() - lastFx.t < 2000) {
@@ -2027,6 +2067,24 @@ function chatKey(e) {
   const inp = document.getElementById('mobileChatInput');
   inp.addEventListener('keydown', e => { if (e.code === 'Enter') { sendChat(inp.value); inp.value = ''; inp.classList.remove('show'); inp.blur(); } });
   inp.addEventListener('blur', () => inp.classList.remove('show'));
+}
+
+/* ================= ボス討伐ランキング ================= */
+function renderRanking() {
+  const list = document.getElementById('rankList');
+  const entries = [{ name: myName(), bk: bossKills, me: true }];
+  for (const rp of remotePlayers.values()) entries.push({ name: rp.name || 'Player', bk: rp.bk || 0, me: false });
+  entries.sort((a, b) => b.bk - a.bk);
+  const medal = i => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
+  const rows = entries.slice(0, 10).map((e, i) =>
+    `<div class="rrow${e.me ? ' me' : ''}"><span class="rk">${medal(i)}</span>` +
+    `<span class="rn">${escHtml(e.name)}</span><span class="rc">${e.bk}体</span></div>`).join('');
+  list.innerHTML = rows || `<div class="rempty">まだ討伐記録がない</div>`;
+}
+function toggleRanking(force) {
+  rankOpen = force !== undefined ? force : !rankOpen;
+  if (rankOpen) renderRanking();
+  document.getElementById('rankPanel').classList.toggle('show', rankOpen);
 }
 
 /* ================= 集合ビーコン ================= */
@@ -2554,6 +2612,8 @@ function killMob(mob) {
     blip(520, 0.15, 'sine', 0.07, 1.3);
     setTimeout(() => blip(660, 0.15, 'sine', 0.07, 1.2), 130);
     setTimeout(() => blip(880, 0.3, 'sine', 0.07, 1.0), 260);
+    // 討伐ランキング：近くで戦った参加者だけカウント
+    if (player.pos.distanceTo(mob.pos) < 70) { bossKills++; if (rankOpen) renderRanking(); }
   } else {
     burst(mob.pos.x - 0.5, mob.pos.y, mob.pos.z - 0.5, mob.t.color, 16);
     blip(300, 0.22, 'triangle', 0.06, 0.35);
@@ -3001,6 +3061,8 @@ function openInvite() {
 function closeInvite() { document.getElementById('invitePanel').classList.remove('show'); }
 const inviteBtn = document.getElementById('inviteBtn');
 if (inviteBtn) inviteBtn.addEventListener('click', e => { e.stopPropagation(); openInvite(); });
+const rankBtn = document.getElementById('rankBtn');
+if (rankBtn) rankBtn.addEventListener('click', e => { e.stopPropagation(); toggleRanking(); });
 document.getElementById('inviteClose').addEventListener('click', closeInvite);
 document.getElementById('invitePanel').addEventListener('click', e => { if (e.target.id === 'invitePanel') closeInvite(); });
 document.getElementById('inviteCopy').addEventListener('click', async () => {
@@ -3044,6 +3106,7 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyF' && playing) { player.fly = !player.fly; player.vel.y = 0; blip(player.fly ? 700 : 400, 0.1, 'sine', 0.05, 1.2); }
   if (e.code === 'KeyQ' && playing && !dead) eatFood();
   if (e.code === 'KeyB' && playing && !dead) setBeacon();
+  if (e.code === 'KeyR' && playing) toggleRanking();
   if (/^Digit[1-9]$/.test(e.code)) { selected = +e.code.slice(5) - 1; renderHotbar(); }
 });
 document.addEventListener('keyup', e => keys[e.code] = false);
@@ -3245,6 +3308,7 @@ if (IS_TOUCH) {
   bindBtn('btnCraft',  () => { if (!dead && worldReady) craftOpen ? closeCraft() : openCraft(); });
   bindBtn('btnChat',   () => { if (!dead && playing) openChat(); });
   bindBtn('btnBeacon', () => { if (!dead && playing) setBeacon(); });
+  bindBtn('btnRank',   () => toggleRanking());
   bindBtn('btnPause',  () => { playing = false; applyHud(); });
 }
 addEventListener('resize', () => {
@@ -3441,7 +3505,7 @@ async function initFirebase() {
     syncAdapter.sendPresence = p => {
       const data = {
         name, x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2),
-        eq: p.eq || 'fist', ar: p.ar || 0, sw: p.sw || 0,
+        eq: p.eq || 'fist', ar: p.ar || 0, sw: p.sw || 0, bk: p.bk || 0,
         t: Date.now(), // 最終更新時刻（幽霊エントリ判定用）
       };
       if (p.fxt) { data.fxt = p.fxt; data.fk = p.fk; if (p.fdx !== undefined) { data.fdx = p.fdx; data.fdy = p.fdy; data.fdz = p.fdz; } }
@@ -3477,7 +3541,7 @@ async function initFirebase() {
         if (!v || !v.t || Date.now() - v.t > 60000) return;
         seen.add(ch.key);
         upsertRemotePlayer({ id: ch.key, name: v.name, x: v.x, y: v.y, z: v.z, yaw: v.yaw, eq: v.eq, ar: v.ar,
-          sw: v.sw, fxt: v.fxt, fk: v.fk, fdx: v.fdx, fdy: v.fdy, fdz: v.fdz });
+          sw: v.sw, fxt: v.fxt, fk: v.fk, fdx: v.fdx, fdy: v.fdy, fdz: v.fdz, bk: v.bk });
       });
       for (const id of [...remotePlayers.keys()])
         if (id.indexOf('dummy-') !== 0 && !seen.has(id)) removeRemotePlayer(id);
@@ -3557,7 +3621,7 @@ function saveGame() {
     player: {
       x: player.pos.x, y: player.pos.y, z: player.pos.z,
       yaw: player.yaw, pitch: player.pitch, hp: player.hp,
-      inventory, owned, ownedTools, ownedArmor, unlockedBlocks, equipped, kills,
+      inventory, owned, ownedTools, ownedArmor, unlockedBlocks, equipped, kills, bossKills,
     },
     dayT,
     savedAt: Date.now(),
@@ -3584,6 +3648,7 @@ function loadGame() {
       if (!unlockedBlocks.includes(id)) unlockedBlocks.push(id);
     if (p.equipped && owned[p.equipped]) equipped = p.equipped;
     kills = p.kills || 0;
+    bossKills = p.bossKills || 0;
     if (d.dayT !== undefined) dayT = d.dayT;
     renderHotbar(); renderHearts(); renderWeaponChip(); buildViewModel();
     enqueueAround(); // ロード位置を中心にチャンク生成し直す
@@ -3612,6 +3677,7 @@ window.NC = {
   sendChat, openChat, closeChat, onChatMessage,
   setBeacon, applyBeacon, openInvite, getBeacon: () => beacon,
   spawnBlackDragon, spawnSnowGolem, blackDragon: () => blackDragon, snowGolem: () => snowGolem,
+  toggleRanking, renderRanking, addBossKill: () => { bossKills++; }, getBossKills: () => bossKills,
   excelShots: () => excelShots.length, iconParts: () => iconParts.length,
   // ダミーのリモートプレイヤーを1体スポーンして円を描いて歩かせる（同期土台の動作確認用）
   spawnDummyPlayer: () => {
