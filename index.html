@@ -2337,53 +2337,62 @@ function buildMobMesh(type) {
     g.userData.glowMats = glowMats;
     g.userData.wings = { wingL, wingR };
   } else if (type === 'blackdragon') {
-    // 黒龍（黒い体＋紫の発光、頭が+z方向、四つ足）
+    // エンダードラゴン風（独自ボクセル形状：黒×紫、頭が+z方向）
     const glowMats = [];
     const gm = (c) => { const m = bas(c); glowMats.push(m); return m; };
-    const body = 0x090909, dark2 = 0x040404, head = 0x121212; // 黒
-    g.add(box(1.0, 0.95, 2.6, lam(body), 0, 0, 0));                       // 胴体
-    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.13, 2.4), gm(0x9b30ff));
-    spine.position.set(0, 0.52, 0); g.add(spine);                         // 背の紫ライン
-    g.add(box(0.6, 0.6, 0.9, lam(body), 0, 0.25, 1.6));                  // 首
-    g.add(box(0.85, 0.7, 0.95, lam(head), 0, 0.45, 2.35));              // 頭
-    g.add(box(0.52, 0.32, 0.55, lam(dark2), 0, 0.32, 2.95));            // 鼻先
-    g.add(box(0.16, 0.5, 0.16, lam(dark2), -0.3, 1.0, 2.2));            // 角
-    g.add(box(0.16, 0.5, 0.16, lam(dark2), 0.3, 1.0, 2.2));
-    // 紫の目（明るい本体＋外側のほのかな光）
-    const eyeC = 0xb026ff;
-    const e1 = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.2, 0.1), gm(eyeC));
-    e1.position.set(-0.3, 0.58, 2.74); g.add(e1);
-    const e2 = e1.clone(); e2.position.x = 0.3; g.add(e2);
-    const eg1 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.34, 0.12),
-      new THREE.MeshBasicMaterial({ color: eyeC, transparent: true, opacity: 0.28, depthWrite: false }));
-    eg1.position.set(-0.3, 0.58, 2.7); g.add(eg1);
-    const eg2 = eg1.clone(); eg2.position.x = 0.3; g.add(eg2);
-    g.add(box(0.55, 0.5, 1.3, lam(body), 0, 0.05, -1.85));              // 尻尾
-    g.add(box(0.32, 0.34, 1.2, lam(dark2), 0, 0.1, -2.95));
-    g.add(box(0.5, 0.3, 0.5, lam(dark2), 0, 0.1, -3.6));                // 尾の先
-    // 四つ足（前2本・後2本）：腿＋爪
+    const body = 0x0b0b0d, dark = 0x050506, P = 0x9b30ff;
+    // 胴体
+    g.add(box(1.2, 1.05, 2.0, lam(body), 0, 0, -0.2));
+    // 背の紫ライン＋棘
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 2.0), gm(P));
+    spine.position.set(0, 0.6, -0.2); g.add(spine);
+    for (let i = 0; i < 6; i++) g.add(box(0.1, 0.22, 0.12, lam(dark), 0, 0.66, -1.0 + i * 0.38)); // 背の棘
+    // 首（3分割で前上がりにカーブ）
+    [[0.7, 0.66, 0.7, 0, 0.2, 1.0], [0.6, 0.58, 0.7, 0, 0.32, 1.65], [0.54, 0.52, 0.6, 0, 0.42, 2.2]]
+      .forEach(s => g.add(box(s[0], s[1], s[2], lam(body), s[3], s[4], s[5])));
+    // 頭（上あご＋下あご＋鼻先、口が開く）
+    g.add(box(0.92, 0.5, 1.05, lam(body), 0, 0.62, 2.85));              // 上頭
+    g.add(box(0.7, 0.22, 0.8, lam(dark), 0, 0.2, 2.95));               // 下あご
+    g.add(box(0.5, 0.28, 0.4, lam(dark), 0, 0.5, 3.4));                // 鼻先
+    [[-0.5, 0.85, 2.7], [0.5, 0.85, 2.7], [0, 1.02, 2.5]]              // 頭のヒレ
+      .forEach(p => g.add(box(0.1, 0.34, 0.5, lam(dark), p[0], p[1], p[2])));
+    // 紫の目＋外側グロウ
+    const e1 = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.16, 0.1), gm(0xc850ff));
+    e1.position.set(-0.34, 0.66, 3.05); g.add(e1);
+    const e2 = e1.clone(); e2.position.x = 0.34; g.add(e2);
+    [-0.34, 0.34].forEach(x => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.3, 0.12),
+        new THREE.MeshBasicMaterial({ color: 0xc850ff, transparent: true, opacity: 0.25, depthWrite: false }));
+      m.position.set(x, 0.66, 3.0); g.add(m);
+    });
+    // 尻尾（5分割でテーパー）＋尾の棘
+    [[0.7, 0.7, 0.9, -1.5], [0.55, 0.55, 0.9, -2.3], [0.42, 0.42, 0.9, -3.05], [0.3, 0.3, 0.8, -3.7], [0.2, 0.2, 0.7, -4.25]]
+      .forEach((s, i) => g.add(box(s[0], s[1], s[2], lam(i % 2 ? dark : body), 0, -i * 0.04, s[3])));
+    for (let i = 0; i < 4; i++) g.add(box(0.08, 0.2, 0.1, lam(dark), 0, 0.4 - i * 0.05, -1.6 - i * 0.7));
+    // 4本足（小さめ・紫の爪）
     const addLeg = (sx, z, big) => {
-      const tw = big ? 0.3 : 0.24, th = big ? 0.72 : 0.56, fw = big ? 0.36 : 0.3, fz = big ? 0.5 : 0.42;
-      const lx = sx * (big ? 0.5 : 0.42);
-      g.add(box(tw, th, tw, lam(body), lx, -0.45 - th / 2 + 0.1, z));        // 腿
-      g.add(box(fw, 0.17, fz, lam(dark2), lx, -0.45 - th + 0.12, z + fz * 0.25)); // 足/爪
-      const claw = new THREE.Mesh(new THREE.BoxGeometry(fw, 0.05, 0.12), gm(0x9b30ff));
-      claw.position.set(lx, -0.45 - th + 0.05, z + fz * 0.5); g.add(claw);   // 紫の爪先
+      const tw = big ? 0.26 : 0.2, th = big ? 0.6 : 0.46, lx = sx * (big ? 0.52 : 0.46);
+      g.add(box(tw, th, tw, lam(body), lx, -0.5 - th / 2 + 0.1, z));
+      g.add(box(tw + 0.1, 0.14, 0.4, lam(dark), lx, -0.5 - th + 0.1, z + 0.15));
+      const c = new THREE.Mesh(new THREE.BoxGeometry(tw + 0.1, 0.05, 0.12), gm(P));
+      c.position.set(lx, -0.5 - th + 0.04, z + 0.32); g.add(c);
     };
-    addLeg(1, 0.95, false); addLeg(-1, 0.95, false);   // 前足2本
-    addLeg(1, -0.7, true);  addLeg(-1, -0.7, true);    // 後足2本
+    addLeg(1, 0.7, false); addLeg(-1, 0.7, false); addLeg(1, -0.7, true); addLeg(-1, -0.7, true);
+    // 翼（膜＋指の骨3本＋紫の前縁）
     const mkWing = (sx) => {
       const w = new THREE.Group();
-      w.add(box(2.5, 0.1, 1.6, lam(0x1b1422), sx * 1.55, 0, 0));
-      const edge = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.06, 0.2), gm(0x9b30ff));
-      edge.position.set(sx * 1.55, 0, 0.8); w.add(edge);
-      w.add(box(0.12, 0.12, 1.6, lam(dark2), sx * 0.3, 0.05, 0));       // 翼の骨
-      w.position.set(sx * 0.5, 0.5, 0.3);
+      w.add(box(2.8, 0.08, 1.7, lam(0x141019), sx * 1.7, 0, -0.1));       // 膜
+      w.add(box(2.9, 0.13, 0.13, lam(dark), sx * 1.7, 0.04, 0.7));        // 前縁の骨
+      w.add(box(2.6, 0.1, 0.1, lam(dark), sx * 1.5, 0.03, 0.0));          // 指の骨
+      w.add(box(2.2, 0.1, 0.1, lam(dark), sx * 1.3, 0.03, -0.65));
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.06, 0.08), gm(P));
+      edge.position.set(sx * 1.7, 0.06, 0.78); w.add(edge);               // 紫の前縁ライン
+      w.position.set(sx * 0.55, 0.5, 0.1);
       return w;
     };
     const wingL = mkWing(-1), wingR = mkWing(1);
     g.add(wingL, wingR);
-    g.scale.setScalar(1.6);
+    g.scale.setScalar(1.7);
     g.userData.glowMats = glowMats;
     g.userData.wings = { wingL, wingR };
   } else if (type === 'snowgolem') {
@@ -2854,8 +2863,11 @@ function updateMobs(dt) {
           : (mob.enraged ? 0xff3b30 : 0xff7a2a);  // マグマ竜：橙⇄激怒赤
         for (const m of gm) m.color.setHex(col).multiplyScalar(p);
       }
-      // 黒炎オーラ（黒龍が身にまとう）
-      if (mob.type === 'blackdragon' && d < 60) spawnAura(mob.pos.x, mob.pos.y + 0.4, mob.pos.z, mob.enraged ? 3 : 2);
+      // 黒炎オーラ（黒龍が身にまとう）。本体が隠れないよう薄く小さめに
+      if (mob.type === 'blackdragon' && d < 60) {
+        mob.auraT = (mob.auraT || 0) - dt;
+        if (mob.auraT <= 0) { mob.auraT = mob.enraged ? 0.06 : 0.1; spawnAura(mob.pos.x, mob.pos.y - 0.1, mob.pos.z, 1, 0.85, 0.45, 0.7); }
+      }
     } else {
       // ボス：激怒時のみ地上をのっしのっしと追ってくる
       mob.swingT = Math.max(0, mob.swingT - dt);
@@ -2952,8 +2964,9 @@ function updateAura(dt) {
 const fireballs = [];
 const fbGeom = new THREE.BoxGeometry(0.42, 0.42, 0.42);
 const fbMat = new THREE.MeshBasicMaterial({ color: 0xffa23d });
+const fbMatPurple = new THREE.MeshBasicMaterial({ color: 0xb026ff }); // 黒龍の吐息
 function shootFireball(mob) {
-  const m = new THREE.Mesh(fbGeom, fbMat);
+  const m = new THREE.Mesh(fbGeom, mob.type === 'blackdragon' ? fbMatPurple : fbMat);
   const start = mob.pos.clone();
   start.y += 0.4;
   const ry = mob.mesh.rotation.y;
