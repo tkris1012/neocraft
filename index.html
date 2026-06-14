@@ -1485,7 +1485,7 @@ function physics(dt) {
 function damagePlayer(dmg, srcPos) {
   if (dead || player.hp <= 0) return;
   // 防具による軽減（1部位-15%、最低1ダメージ）
-  dmg = Math.max(1, Math.round(dmg * (1 - armorCount() * 0.15)));
+  dmg = Math.max(1, Math.round(dmg * (1 - armorReduction())));
   player.hp -= dmg;
   lastDamageT = performance.now() / 1000;
   flashT = 1;
@@ -1549,9 +1549,11 @@ const TOOLS = {
   shovel: { name: 'シャベル', icon: '🧹', recipe: { wood: 2, stone: 1 } },
 };
 const ownedTools = { pick: false, axe: false, shovel: false };
-/* ---- 防具（作ると自動装着。1部位ごとに被ダメージ-15%） ---- */
-const ownedArmor = { helm: false, chest: false, legs: false };
+/* ---- 防具（作ると自動装着。石は1部位-15%、黒龍の鎧は-50%＋黒炎） ---- */
+const ownedArmor = { helm: false, chest: false, legs: false, dragon: false };
 const armorCount = () => (ownedArmor.helm ? 1 : 0) + (ownedArmor.chest ? 1 : 0) + (ownedArmor.legs ? 1 : 0);
+// 被ダメージ軽減率（最大80%）
+const armorReduction = () => Math.min(0.8, armorCount() * 0.15 + (ownedArmor.dragon ? 0.5 : 0));
 // ブロックの硬さ（素手での破壊秒数）
 const HARDNESS = {
   [B.GRASS]: 0.7, [B.DIRT]: 0.6, [B.SAND]: 0.6, [B.SNOW]: 0.4,
@@ -1597,6 +1599,7 @@ const RECIPES = [
   { id: 'helm',   kind: 'armor',  name: '石の兜',   icon: '🪖', cost: { stone: 5 }, table: true, desc: '被ダメージ-15%' },
   { id: 'chest',  kind: 'armor',  name: '石の鎧',   icon: '🛡️', cost: { stone: 8 }, table: true, desc: '被ダメージ-15%' },
   { id: 'legs',   kind: 'armor',  name: '石の脚甲', icon: '🦵', cost: { stone: 7 }, table: true, desc: '被ダメージ-15%' },
+  { id: 'dragon', kind: 'armor',  name: '黒龍の鎧', icon: '🐲', cost: { core: 8, glow: 6, stone: 6 }, table: true, desc: '被ダメージ-50%＋黒炎をまとう' },
   { id: 'wood',   kind: 'weapon', name: '木の剣',   icon: '🗡️', cost: { wood: 3 } },
   { id: 'stone',  kind: 'weapon', name: '石の剣',   icon: '⚔️', cost: { wood: 2, stone: 3 }, table: true },
   { id: 'neon',   kind: 'weapon', name: 'ネオンブレード', icon: '🔷', cost: { stone: 2, glow: 3, core: 2 }, table: true },
@@ -1625,7 +1628,7 @@ function craftRecipe(rid) {
   for (const m in r.cost) inventory[m] -= r.cost[m];
   if (r.kind === 'block') unlockBlock(r.block());
   else if (r.kind === 'tool') { ownedTools[r.id] = true; toast(`${r.icon} <b>${r.name}</b>を作った！`); }
-  else if (r.kind === 'armor') { ownedArmor[r.id] = true; toast(`${r.icon} <b>${r.name}</b>を装着した！（被ダメージ-${armorCount() * 15}%）`); renderWeaponChip(); }
+  else if (r.kind === 'armor') { ownedArmor[r.id] = true; toast(`${r.icon} <b>${r.name}</b>を装着した！（被ダメージ-${Math.round(armorReduction() * 100)}%）`); renderWeaponChip(); }
   else if (r.kind === 'food') { inventory.meat++; toast(`${r.icon} <b>${r.name}</b>を調理した！`); }
   else { owned[r.id] = true; toast(`⚒️ <b>${r.name}</b>を合成した！`); equipWeapon(r.id); }
   blip(520, 0.1, 'sine', 0.06, 1.4);
@@ -1649,10 +1652,10 @@ function gainMat(m, n = 1) {
 
 function renderWeaponChip() {
   const w = WEAPONS[equipped];
-  const ar = armorCount();
+  const red = Math.round(armorReduction() * 100);
   document.getElementById('weaponchip').innerHTML =
     `⚔️ <b>${w.name}</b><br><span class="atk">ATK ${w.atk}</span>` +
-    (ar > 0 ? `<br>🛡️ -${ar * 15}%` : '');
+    (red > 0 ? `<br>${ownedArmor.dragon ? '🐲' : '🛡️'} -${red}%` : '');
 }
 function renderCraft() {
   document.getElementById('matsRow').innerHTML = Object.keys(MAT_NAMES).map(m =>
@@ -1862,9 +1865,12 @@ function applyPlayerGear(rp, eq, ar) {
   if (rp.eq === eq && rp.ar === ar) return;
   rp.eq = eq; rp.ar = ar;
   const u = rp.mesh.userData;
-  u.armor.helmO.visible  = !!(ar & 1);
-  u.armor.chestO.visible = !!(ar & 2);
-  u.armor.legO.visible   = !!(ar & 4);
+  const dragonArmor = !!(ar & 8);
+  rp.dragonArmor = dragonArmor; // 黒炎エフェクト用
+  u.armor.helmO.visible  = !!(ar & 1) || dragonArmor;
+  u.armor.chestO.visible = !!(ar & 2) || dragonArmor;
+  u.armor.legO.visible   = !!(ar & 4) || dragonArmor;
+  u.armor.helmO.material.color.setHex(dragonArmor ? 0x120a18 : 0x9aa1a9); // 黒龍の鎧は黒、石はグレー（材質は共有）
   while (u.hand.children.length) {
     const c = u.hand.children.pop();
     if (c.material && c.material.dispose) c.material.dispose();
@@ -1987,7 +1993,7 @@ function presenceTick(dt) {
     id: LOCAL_PLAYER_ID,
     x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw,
     eq: equipped,
-    ar: (ownedArmor.helm ? 1 : 0) | (ownedArmor.chest ? 2 : 0) | (ownedArmor.legs ? 4 : 0),
+    ar: (ownedArmor.helm ? 1 : 0) | (ownedArmor.chest ? 2 : 0) | (ownedArmor.legs ? 4 : 0) | (ownedArmor.dragon ? 8 : 0),
     sw: lastSwingT, // 最後のスイング時刻（攻撃モーション同期）
     bk: bossKills,  // ボス討伐数（ランキング用）
   };
@@ -2915,17 +2921,17 @@ function updateMobs(dt) {
 /* ================= 黒龍の黒炎オーラ ================= */
 const auraParts = [];
 const auraGeo = new THREE.BoxGeometry(1, 1, 1);
-function spawnAura(x, y, z, n) {
-  if (auraParts.length > 90) return;
+function spawnAura(x, y, z, n, spread = 1, sizeScale = 1) {
+  if (auraParts.length > 140) return;
   for (let i = 0; i < n; i++) {
     const bright = Math.random() < 0.28; // 一部だけ紫に光らせて炎感を出す
     const m = new THREE.Mesh(auraGeo, new THREE.MeshBasicMaterial({
       color: bright ? 0xa020ff : 0x140320, transparent: true, opacity: 0.85, depthWrite: false,
     }));
-    m.position.set(x + (Math.random() - 0.5) * 4.2, y + (Math.random() - 0.5) * 2.0, z + (Math.random() - 0.5) * 5.0);
+    m.position.set(x + (Math.random() - 0.5) * 4.2 * spread, y + (Math.random() - 0.5) * 2.0 * spread, z + (Math.random() - 0.5) * 5.0 * spread);
     m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
     const life = 0.45 + Math.random() * 0.5;
-    auraParts.push({ m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.4, 1.4 + Math.random() * 1.8, (Math.random() - 0.5) * 1.4), life, max: life });
+    auraParts.push({ m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.4, 1.4 + Math.random() * 1.8, (Math.random() - 0.5) * 1.4), life, max: life, size: sizeScale });
     scene.add(m);
   }
 }
@@ -2938,7 +2944,7 @@ function updateAura(dt) {
     p.m.rotation.x += dt * 2.4; p.m.rotation.y += dt * 1.8;
     const k = p.life / p.max;
     p.m.material.opacity = k * 0.8;
-    p.m.scale.setScalar(0.5 + (1 - k) * 0.9); // 立ち昇りながら膨らんで消える＝炎の揺らめき
+    p.m.scale.setScalar((0.5 + (1 - k) * 0.9) * (p.size || 1)); // 立ち昇りながら膨らんで消える＝炎の揺らめき
   }
 }
 
@@ -3817,6 +3823,10 @@ function loop(now) {
   }
   updateFireballs(dt);
   updateAura(dt);
+  // 黒龍の鎧を装備中は自分も黒炎をまとう（足元/周囲に立ち昇る）
+  if (ownedArmor.dragon && playing && !dead) spawnAura(player.pos.x, player.pos.y + 0.9, player.pos.z, 1, 0.32, 0.5);
+  // 他プレイヤーの黒龍の鎧の黒炎
+  for (const rp of remotePlayers.values()) if (rp.dragonArmor) spawnAura(rp.pos.x, rp.pos.y + 0.9, rp.pos.z, 1, 0.32, 0.5);
   updateExcelShots(dt);
   updateRemoteShots(dt);
   updateIconParts(dt);
