@@ -1329,6 +1329,60 @@ function blip(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0.6) {
   } catch (e) {}
 }
 
+/* ================= ボス戦BGM（オリジナルの自動生成・緊迫した短いループ） ================= */
+let bgmOn = false, bgmTimer = null, bgmStep = 0, bgmGain = null;
+function bgmNote(freq, dur, type, vol, when) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, when);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(vol, when + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  o.connect(g); g.connect(bgmGain);
+  o.start(when); o.stop(when + dur + 0.02);
+}
+function bgmKick(when) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(150, when);
+  o.frequency.exponentialRampToValueAtTime(45, when + 0.12);
+  g.gain.setValueAtTime(0.5, when);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.16);
+  o.connect(g); g.connect(bgmGain);
+  o.start(when); o.stop(when + 0.18);
+}
+function startBossBgm() {
+  if (bgmOn) return;
+  try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+  if (actx.state === 'suspended') actx.resume();
+  bgmOn = true; bgmStep = 0;
+  bgmGain = actx.createGain(); bgmGain.gain.value = 0; bgmGain.connect(actx.destination);
+  bgmGain.gain.linearRampToValueAtTime(0.5, actx.currentTime + 1.2); // フェードイン
+  const bpm = 150, sd = 60 / bpm / 2; // 8分音符
+  // Dマイナー系のオリジナルなベース/アルペジオ進行（著作権曲の引用なし）
+  const bass = [73.4, 73.4, 87.3, 73.4, 98.0, 92.5, 87.3, 65.4]; // D2基調の8音
+  const lead = [587, 698, 587, 880, 784, 698, 587, 523];
+  bgmTimer = setInterval(() => {
+    if (!actx || !bgmGain) return;
+    const t = actx.currentTime + 0.05;
+    const s16 = bgmStep % 16, s8 = bgmStep % 8;
+    bgmNote(bass[s8], sd * 0.95, 'sawtooth', 0.18, t);                 // ベース
+    if (s16 % 4 === 0) bgmKick(t);                                     // キック
+    if (s16 % 2 === 1) bgmNote(lead[s8] * 0.5, sd * 0.4, 'square', 0.05, t); // 裏のリズム
+    if (bgmStep % 2 === 0) bgmNote(lead[s8], sd * 1.6, 'triangle', 0.07, t); // 緊迫したリード
+    bgmStep++;
+  }, sd * 1000);
+}
+function stopBossBgm() {
+  if (!bgmOn) return;
+  bgmOn = false;
+  clearInterval(bgmTimer); bgmTimer = null;
+  if (bgmGain && actx) {
+    const g = bgmGain;
+    try { g.gain.cancelScheduledValues(actx.currentTime); g.gain.setValueAtTime(g.gain.value, actx.currentTime); g.gain.linearRampToValueAtTime(0, actx.currentTime + 0.6); } catch (e) {}
+    setTimeout(() => { try { g.disconnect(); } catch (e) {} }, 800);
+  }
+  bgmGain = null;
+}
+
 /* ================= UI ヘルパー ================= */
 function toast(html) {
   const el = document.createElement('div');
@@ -2219,7 +2273,7 @@ const MOB_TYPES = {
   },
   // ---- 追加ボス ----
   blackdragon: {
-    name: '黒龍', hp: 120, dmg: 6, speed: 5.2, radius: 2.2, aggroR: 0,
+    name: '黒龍', hp: 2000, dmg: 6, speed: 5.2, radius: 2.2, aggroR: 0,
     color: new THREE.Color(0x9b30ff),
     drops: () => [['core', 10], ['glow', 14], ['stone', 12]],
   },
@@ -2365,17 +2419,26 @@ function buildMobMesh(type) {
         new THREE.MeshBasicMaterial({ color: 0xc850ff, transparent: true, opacity: 0.25, depthWrite: false }));
       m.position.set(x, 0.66, 3.0); g.add(m);
     });
-    // 尻尾（5分割でテーパー）＋尾の棘
+    // 尻尾（5分割でテーパー、波打ち用に参照を保持）＋尾の棘（各節に追従）
+    const tailSegs = [];
     [[0.7, 0.7, 0.9, -1.5], [0.55, 0.55, 0.9, -2.3], [0.42, 0.42, 0.9, -3.05], [0.3, 0.3, 0.8, -3.7], [0.2, 0.2, 0.7, -4.25]]
-      .forEach((s, i) => g.add(box(s[0], s[1], s[2], lam(i % 2 ? dark : body), 0, -i * 0.04, s[3])));
-    for (let i = 0; i < 4; i++) g.add(box(0.08, 0.2, 0.1, lam(dark), 0, 0.4 - i * 0.05, -1.6 - i * 0.7));
-    // 4本足（小さめ・紫の爪）
+      .forEach((s, i) => { const m = box(s[0], s[1], s[2], lam(i % 2 ? dark : body), 0, -i * 0.04, s[3]); g.add(m); tailSegs.push(m); });
+    for (let i = 0; i < 4; i++) {
+      const seg = tailSegs[i + 1];
+      const sp = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.1), lam(dark));
+      sp.position.set(0, 0.35, 0); sp.userData.flashable = true; seg.add(sp);
+    }
+    // 4本足（股関節ピボットのグループ。波打ち/水掻きアニメ用に参照を保持）
+    const legs = [];
     const addLeg = (sx, z, big) => {
       const tw = big ? 0.26 : 0.2, th = big ? 0.6 : 0.46, lx = sx * (big ? 0.52 : 0.46);
-      g.add(box(tw, th, tw, lam(body), lx, -0.5 - th / 2 + 0.1, z));
-      g.add(box(tw + 0.1, 0.14, 0.4, lam(dark), lx, -0.5 - th + 0.1, z + 0.15));
+      const grp = new THREE.Group();
+      grp.position.set(lx, -0.4, z);
+      grp.add(box(tw, th, tw, lam(body), 0, -th / 2, 0));
+      grp.add(box(tw + 0.1, 0.14, 0.4, lam(dark), 0, -th, 0.15));
       const c = new THREE.Mesh(new THREE.BoxGeometry(tw + 0.1, 0.05, 0.12), gm(P));
-      c.position.set(lx, -0.5 - th + 0.04, z + 0.32); g.add(c);
+      c.position.set(0, -th, 0.32); c.userData.flashable = true; grp.add(c);
+      g.add(grp); legs.push(grp);
     };
     addLeg(1, 0.7, false); addLeg(-1, 0.7, false); addLeg(1, -0.7, true); addLeg(-1, -0.7, true);
     // 翼（膜＋指の骨3本＋紫の前縁）
@@ -2395,6 +2458,8 @@ function buildMobMesh(type) {
     g.scale.setScalar(1.7);
     g.userData.glowMats = glowMats;
     g.userData.wings = { wingL, wingR };
+    g.userData.tail = tailSegs;
+    g.userData.legs = legs;
   } else if (type === 'snowgolem') {
     // 氷雪のゴーレム（イエティ風：白い毛＋氷塊の拳＋赤い口）
     const ice = 0xcfeaf5, deep = 0x5fa8cf, white = 0xeaf6fb;
@@ -2620,6 +2685,7 @@ function enrageToast(mob) {
 function hurtMob(mob, dmg, fromDir) {
   mob.flashT = 1;
   blip(95, 0.08, 'sawtooth', 0.06, 0.7);
+  if (mob.type === 'blackdragon') startBossBgm(); // 黒龍に攻撃したらボス戦BGM
   const isBoss = isBossType(mob.type);
   // 共有ワールドボス：HP/激怒/撃破はFirebase経由（全員で削る共闘）
   if (isBoss && syncAdapter.connected && syncAdapter.damageBoss) {
@@ -2650,7 +2716,7 @@ function applyBossState(state) {
     } else {
       if (!mob && worldReady) { spawnByKind(kind); mob = getBossByKind(kind); }
       if (mob) {
-        if (!mob.enraged && s.enraged) enrageToast(mob); // 激怒に切り替わった瞬間に通知
+        if (!mob.enraged && s.enraged) { enrageToast(mob); if (kind === 'blackdragon') startBossBgm(); } // 激怒した瞬間に通知＋BGM
         mob.hp = s.hp; mob.enraged = s.enraged; mob.maxHp = s.max || mob.maxHp;
       }
     }
@@ -2827,6 +2893,12 @@ function updateMobs(dt) {
       mob.swingT = Math.max(0, mob.swingT - dt);
       const W = mob.mesh.userData.wings;
       if (W) { const fl = Math.sin(mob.bobT * (aggro ? 7 : 4)) * 0.55; W.wingL.rotation.z = fl; W.wingR.rotation.z = -fl; }
+      // しっぽ・足の波打ちアニメ（黒龍）
+      if (mob.type === 'blackdragon') {
+        const u = mob.mesh.userData, sp = aggro ? 5 : 3;
+        if (u.tail) for (let i = 0; i < u.tail.length; i++) u.tail[i].position.x = Math.sin(mob.bobT * sp - i * 0.7) * 0.08 * (i + 1);
+        if (u.legs) for (let i = 0; i < u.legs.length; i++) u.legs[i].rotation.x = Math.sin(mob.bobT * sp + i * 1.4) * 0.5;
+      }
       const playerNearHome = playerCenter.distanceTo(mob.home) < 45;
       if (aggro && playerNearHome) {
         const target = playerCenter.clone(); target.y += 1.2;
@@ -2974,7 +3046,7 @@ function shootFireball(mob) {
   start.z += Math.cos(ry) * 3.4;
   m.position.copy(start);
   const vel = playerCenter.clone().sub(start).normalize().multiplyScalar(8.5);
-  fireballs.push({ m, vel, life: 3.5 });
+  fireballs.push({ m, vel, life: 3.5, breath: mob.type === 'blackdragon' });
   scene.add(m);
   blip(150, 0.3, 'sawtooth', 0.07, 0.4);
 }
@@ -2990,9 +3062,48 @@ function updateFireballs(dt) {
     const hitPlayer = !dead && playing && p.distanceTo(playerCenter) < 1.2;
     if (hitPlayer) damagePlayer(3, p);
     if (hitSolid || hitPlayer || f.life <= 0) {
-      burst(p.x - 0.5, p.y - 0.5, p.z - 0.5, new THREE.Color(0xff7a2a), 10);
+      if (f.breath && hitSolid) { spawnFireField(p.x, p.z); burst(p.x - 0.5, p.y - 0.5, p.z - 0.5, new THREE.Color(0xb026ff), 14); }
+      else burst(p.x - 0.5, p.y - 0.5, p.z - 0.5, f.breath ? new THREE.Color(0xb026ff) : new THREE.Color(0xff7a2a), 10);
       scene.remove(f.m);
       fireballs.splice(i, 1);
+    }
+  }
+}
+/* ================= 黒龍のブレス炎（地面に広がる紫炎・範囲ダメージ） ================= */
+const fireFields = [];
+const flameGeo = new THREE.BoxGeometry(1, 1, 1);
+function spawnFireField(x, z) {
+  const gy = groundAt(x, z);
+  fireFields.push({ x, z, y: gy, r: 5.5, life: 7, max: 7, dmgCd: 0 });
+  blip(80, 0.5, 'sawtooth', 0.09, 0.45);
+  setTimeout(() => blip(60, 0.4, 'sawtooth', 0.07, 0.5), 120);
+}
+function updateFireFields(dt) {
+  for (let i = fireFields.length - 1; i >= 0; i--) {
+    const f = fireFields[i];
+    f.life -= dt;
+    if (f.life <= 0) { fireFields.splice(i, 1); continue; }
+    const r = f.r * Math.min(1, (f.max - f.life) / 1.2); // 1.2秒かけて広がる
+    // 地面に広がる紫炎パーティクル
+    if (f.life > 0.6 && auraParts.length < 210) {
+      for (let k = 0; k < 3; k++) {
+        const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * r;
+        const m = new THREE.Mesh(flameGeo, new THREE.MeshBasicMaterial({
+          color: Math.random() < 0.4 ? 0xd070ff : 0x6a18b0, transparent: true, opacity: 0.8, depthWrite: false,
+        }));
+        m.scale.setScalar(0.4 + Math.random() * 0.5);
+        m.position.set(f.x + Math.cos(a) * rr, f.y + 0.1, f.z + Math.sin(a) * rr);
+        m.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+        auraParts.push({ m, vel: new THREE.Vector3((Math.random() - 0.5) * 0.6, 1.6 + Math.random() * 1.6, (Math.random() - 0.5) * 0.6), life: 0.5 + Math.random() * 0.4, max: 0.9, size: 1 });
+        scene.add(m);
+      }
+    }
+    // 範囲ダメージ（炎の上にいる時、0.6秒ごと）
+    f.dmgCd -= dt;
+    if (f.dmgCd <= 0 && !dead && playing) {
+      if (Math.hypot(player.pos.x - f.x, player.pos.z - f.z) < r && Math.abs(player.pos.y - f.y) < 3) {
+        damagePlayer(4, null); f.dmgCd = 0.6;
+      }
     }
   }
 }
@@ -3665,11 +3776,12 @@ async function initFirebase() {
 
     // --- 共有ワールドボス（HP/激怒/撃破/復活を全員で同期） ---
     // bossesノードへの書き込み権限が無い（ルール未更新）場合は従来の個別ボスにフォールバック
-    const BOSS_MAX = { golem: 60, dragon: 80, blackdragon: 120, snowgolem: 100 };
+    const BOSS_MAX = { golem: 60, dragon: 80, blackdragon: 2000, snowgolem: 100 };
     const bRef = k => ref(db, `worlds/${worldId}/bosses/${k}`);
     try {
+      // 最大HPの設定が変わったボスは作り直す（max不一致でリセット）
       for (const k of BOSS_KINDS)
-        await runTransaction(bRef(k), cur => cur || { hp: BOSS_MAX[k], max: BOSS_MAX[k], enraged: false, dead: false, deadAt: 0 });
+        await runTransaction(bRef(k), cur => (cur && cur.max === BOSS_MAX[k]) ? cur : { hp: BOSS_MAX[k], max: BOSS_MAX[k], enraged: false, dead: false, deadAt: 0 });
       syncAdapter.damageBoss = (k, dmg) => {
         runTransaction(bRef(k), cur => {
           if (!cur) return { hp: Math.max(0, BOSS_MAX[k] - dmg), max: BOSS_MAX[k], enraged: true, dead: BOSS_MAX[k] - dmg <= 0, deadAt: BOSS_MAX[k] - dmg <= 0 ? Date.now() : 0 };
@@ -3778,6 +3890,7 @@ window.NC = {
   sendChat, openChat, closeChat, onChatMessage,
   setBeacon, applyBeacon, openInvite, getBeacon: () => beacon,
   spawnBlackDragon, spawnSnowGolem, blackDragon: () => blackDragon, snowGolem: () => snowGolem,
+  spawnFireField, startBossBgm, stopBossBgm, bgmActive: () => bgmOn, fireFieldCount: () => fireFields.length,
   toggleRanking, renderRanking, addBossKill: () => { bossKills++; }, getBossKills: () => bossKills,
   setScoreboard: s => { scoreboard = s; },
   excelShots: () => excelShots.length, iconParts: () => iconParts.length,
@@ -3835,7 +3948,13 @@ function loop(now) {
     spawnTimer = 3;
   }
   updateFireballs(dt);
+  updateFireFields(dt);
   updateAura(dt);
+  // ボス戦BGMの停止条件（討伐／死亡／離脱）
+  if (bgmOn) {
+    const bd = blackDragon;
+    if (!bd || !bd.enraged || dead || !playing || bd.pos.distanceTo(player.pos) > 95) stopBossBgm();
+  }
   // 黒龍の鎧の黒炎（視界を塞がないよう低い位置・少量・ゆっくり上昇）
   armorAuraT -= dt;
   if (armorAuraT <= 0) {
