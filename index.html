@@ -2921,7 +2921,7 @@ function updateMobs(dt) {
 /* ================= 黒龍の黒炎オーラ ================= */
 const auraParts = [];
 const auraGeo = new THREE.BoxGeometry(1, 1, 1);
-function spawnAura(x, y, z, n, spread = 1, sizeScale = 1) {
+function spawnAura(x, y, z, n, spread = 1, sizeScale = 1, riseScale = 1) {
   if (auraParts.length > 140) return;
   for (let i = 0; i < n; i++) {
     const bright = Math.random() < 0.28; // 一部だけ紫に光らせて炎感を出す
@@ -2931,7 +2931,7 @@ function spawnAura(x, y, z, n, spread = 1, sizeScale = 1) {
     m.position.set(x + (Math.random() - 0.5) * 4.2 * spread, y + (Math.random() - 0.5) * 2.0 * spread, z + (Math.random() - 0.5) * 5.0 * spread);
     m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
     const life = 0.45 + Math.random() * 0.5;
-    auraParts.push({ m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.4, 1.4 + Math.random() * 1.8, (Math.random() - 0.5) * 1.4), life, max: life, size: sizeScale });
+    auraParts.push({ m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.4, (1.4 + Math.random() * 1.8) * riseScale, (Math.random() - 0.5) * 1.4), life, max: life, size: sizeScale });
     scene.add(m);
   }
 }
@@ -3796,7 +3796,7 @@ window.NC = {
 
 /* ================= メインループ ================= */
 let prev = performance.now();
-let spawnTimer = 0, regenTimer = 0, saveTimer = 10;
+let spawnTimer = 0, regenTimer = 0, saveTimer = 10, armorAuraT = 0;
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min((now - prev) / 1000, 0.1);
@@ -3823,10 +3823,13 @@ function loop(now) {
   }
   updateFireballs(dt);
   updateAura(dt);
-  // 黒龍の鎧を装備中は自分も黒炎をまとう（足元/周囲に立ち昇る）
-  if (ownedArmor.dragon && playing && !dead) spawnAura(player.pos.x, player.pos.y + 0.9, player.pos.z, 1, 0.32, 0.5);
-  // 他プレイヤーの黒龍の鎧の黒炎
-  for (const rp of remotePlayers.values()) if (rp.dragonArmor) spawnAura(rp.pos.x, rp.pos.y + 0.9, rp.pos.z, 1, 0.32, 0.5);
+  // 黒龍の鎧の黒炎（視界を塞がないよう低い位置・少量・ゆっくり上昇）
+  armorAuraT -= dt;
+  if (armorAuraT <= 0) {
+    armorAuraT = 0.2; // 毎秒5個程度に間引き
+    if (ownedArmor.dragon && playing && !dead) spawnAura(player.pos.x, player.pos.y + 0.25, player.pos.z, 1, 0.18, 0.35, 0.35);
+    for (const rp of remotePlayers.values()) if (rp.dragonArmor) spawnAura(rp.pos.x, rp.pos.y + 0.6, rp.pos.z, 1, 0.28, 0.4, 0.5);
+  }
   updateExcelShots(dt);
   updateRemoteShots(dt);
   updateIconParts(dt);
